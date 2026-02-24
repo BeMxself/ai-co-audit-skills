@@ -13,8 +13,27 @@ This skill installs/syncs implementation-audit automation assets into the curren
 
 - `PROJECT_ROOT`: current working directory.
 - `SKILL_DIR`: directory containing this `SKILL.md`.
-- `REFERENCE_DIR`: `${SKILL_DIR}/automation-ref`.
+- `PROJECT_REFERENCE_DIR`: `${PROJECT_ROOT}/skills/implementation-audit/automation-ref`.
+- `SKILL_REFERENCE_DIR`: `${SKILL_DIR}/automation-ref`.
+- `REFERENCE_DIR`: resolved source directory (must not be under `~/.claude/plugins/cache`).
 - `TARGET_DIR`: `${PROJECT_ROOT}/automation/implementation-audit`.
+
+Resolve `REFERENCE_DIR` before Step 1:
+
+```bash
+PROJECT_REFERENCE_DIR="${PROJECT_ROOT}/skills/implementation-audit/automation-ref"
+SKILL_REFERENCE_DIR="${SKILL_DIR}/automation-ref"
+
+if [[ -d "${PROJECT_REFERENCE_DIR}" ]]; then
+  REFERENCE_DIR="${PROJECT_REFERENCE_DIR}"
+elif [[ "${SKILL_REFERENCE_DIR}" == *"/.claude/plugins/cache/"* || "${SKILL_REFERENCE_DIR}" == *"/.claude/plugins/cache" ]]; then
+  echo "Refusing cache reference dir: ${SKILL_REFERENCE_DIR}" >&2
+  echo "Use a non-cache source directory to avoid stale automation assets." >&2
+  exit 2
+else
+  REFERENCE_DIR="${SKILL_REFERENCE_DIR}"
+fi
+```
 
 ## Step 1: Sync Automation Assets
 

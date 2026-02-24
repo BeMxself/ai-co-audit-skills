@@ -2,7 +2,7 @@
 # sync-automation.sh
 # Compares implementation-audit reference scripts against a target directory and reports/copies differences.
 # Usage: sync-automation.sh <reference-dir> <target-dir> [--auto-copy]
-# Exit codes: 0=all in sync, 1=differences found
+# Exit codes: 0=all in sync, 1=differences found, 2=invalid reference dir
 set -euo pipefail
 
 REFERENCE_DIR="${1:?Usage: sync-automation.sh <reference-dir> <target-dir> [--auto-copy]}"
@@ -14,6 +14,12 @@ if [[ "$REFERENCE_DIR" != /* ]]; then
 fi
 if [[ "$TARGET_DIR" != /* ]]; then
   TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+fi
+
+if [[ "$REFERENCE_DIR" == *"/.claude/plugins/cache/"* || "$REFERENCE_DIR" == *"/.claude/plugins/cache" ]]; then
+  echo "[ERROR] Refusing to read Claude cache reference dir: $REFERENCE_DIR" >&2
+  echo "[ERROR] Use a non-cache source directory to avoid syncing stale assets." >&2
+  exit 2
 fi
 
 FILES=(

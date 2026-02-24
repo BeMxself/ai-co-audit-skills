@@ -163,3 +163,4 @@ bash automation/implementation-audit/init.sh \
 - 审计过程会生成对话式转录文件：`transcripts/implementation-audit-dialogue.md`，便于人工复核。
 - 如果你希望强制不用 claude 生成元信息，可在初始化时加 `--no-claude-meta`。
 - 运行日志会显示当前阶段与迭代轮次，便于跟踪进度。
+- `sync-automation.sh` 会拒绝 `~/.claude/plugins/cache` 下的 reference 目录，避免同步到过期缓存内容。
