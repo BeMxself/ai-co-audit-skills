@@ -71,6 +71,17 @@ contains_marker() {
   [[ "$normalized_non_empty" == "$marker" ]]
 }
 
+is_claude_code_session() {
+  [[ -n "${AI_CO_AUDIT_CLAUDE_CODE:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_SESSION:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_HOME:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_WORKSPACE:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_VERSION:-}" ]] && return 0
+  [[ -n "${CLAUDE_CODE_PID:-}" ]] && return 0
+  return 1
+}
+
 append_dialogue_entry() {
   local transcript_file="$1"
   local step_name="$2"

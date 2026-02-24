@@ -22,6 +22,8 @@ Then install the plugin:
 
 After installation, use `/implementation-audit` to invoke the skill.
 
+Note: `run` / `continue` invoke the `claude` CLI and cannot run inside an active Claude Code session. Use an external terminal, or `--dry-run` to generate prompts only.
+
 ### Codex (Skills)
 
 Codex scans skills from:

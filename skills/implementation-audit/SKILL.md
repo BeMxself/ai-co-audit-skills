@@ -79,3 +79,4 @@ Valid phases:
 - Do not rely on shell interactive input for control flow.
 - Keep workflow files under `.ai-workflows/<task-id>/`.
 - `--final-report-path` must be relative to `workingDirectory`.
+- When running inside Claude Code, avoid calling `.ai-workflows/<task-id>/run` directly since it invokes the `claude` CLI. Use an external terminal or `--dry-run` to generate prompts only.
