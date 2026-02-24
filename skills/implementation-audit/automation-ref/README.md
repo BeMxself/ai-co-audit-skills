@@ -123,7 +123,7 @@ bash automation/implementation-audit/init.sh \
 可选字段：
 - `timeoutSeconds`（默认 `1800`）
 - `workingDirectory`（默认 `.`）
-- `finalReportPath`（相对 `workingDirectory` 的输出路径；存在时流程结束自动导出最终报告）
+- `finalReportPath`（相对 `workingDirectory` 的输出路径；存在时流程结束自动导出最终报告；也可写入 `.ai-workflows/<task-id>/state/final_report_path.txt`，并避免出现在 prompts 中）
 - `successMarker`（默认使用上面的成功标记串）
 - `agents.claude.command`（自定义命令，从 stdin 读取提示词）
 - `agents.codex.command`（自定义命令，从 stdin 读取提示词）

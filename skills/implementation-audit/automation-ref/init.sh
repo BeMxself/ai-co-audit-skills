@@ -24,6 +24,7 @@ INPUTS=()
 AUTO_META_WITH_CLAUDE=1
 USER_PROVIDED_TASK_ID=0
 DEFAULT_OBJECTIVE="检查未完成的、与设计不符合的、违反设计原则的、重复实现的、逻辑不能自洽的、实现存在矛盾的问题，并给出可验证证据（文件路径 + 行号）。"
+FINAL_REPORT_PATH_FILE=""
 
 slugify() {
   local raw="$1"
@@ -288,8 +289,10 @@ if [[ -n "$FINAL_REPORT_PATH" && "$FINAL_REPORT_PATH" = /* ]]; then
   fail "--final-report-path must be a relative path (relative to working directory)"
 fi
 
-FINAL_REPORT_PATH_DISPLAY="$FINAL_REPORT_PATH"
-[[ -n "$FINAL_REPORT_PATH_DISPLAY" ]] || FINAL_REPORT_PATH_DISPLAY="(not configured)"
+FINAL_REPORT_PATH_DISPLAY="(not configured)"
+if [[ -n "$FINAL_REPORT_PATH" ]]; then
+  FINAL_REPORT_PATH_DISPLAY="(configured)"
+fi
 
 if [[ -z "$TASK_ID" || -z "$TASK_NAME" || -z "$REPORT_BASE_NAME" ]]; then
   if [[ "$AUTO_META_WITH_CLAUDE" -eq 1 ]] && try_generate_meta_with_claude; then
@@ -335,6 +338,11 @@ ensure_dir "$TASK_DIR/transcripts"
 printf "%s\n" "${INPUTS[@]}" >"${TASK_DIR}/inputs/targets.txt"
 printf "%s\n" "$OBJECTIVE" >"${TASK_DIR}/inputs/objective.txt"
 
+FINAL_REPORT_PATH_FILE="${TASK_DIR}/state/final_report_path.txt"
+if [[ -n "$FINAL_REPORT_PATH" ]]; then
+  printf "%s\n" "$FINAL_REPORT_PATH" >"$FINAL_REPORT_PATH_FILE"
+fi
+
 inputs_json="$(printf "%s\n" "${INPUTS[@]}" | jq -R . | jq -s .)"
 
 jq -n \
@@ -343,7 +351,7 @@ jq -n \
   --arg reportBaseName "$REPORT_BASE_NAME" \
   --arg successMarker "$SUCCESS_MARKER" \
   --arg workingDirectory "$WORKING_DIRECTORY" \
-  --arg finalReportPath "$FINAL_REPORT_PATH" \
+  --arg finalReportPath "" \
   --arg claudeCmd "$CLAUDE_CMD" \
   --arg codexCmd "$CODEX_CMD" \
   --argjson maxRounds "$MAX_ROUNDS" \

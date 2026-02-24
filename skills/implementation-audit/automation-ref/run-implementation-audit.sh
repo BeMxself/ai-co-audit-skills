@@ -105,6 +105,11 @@ FINAL_REPORT_PATH="$(json_optional "$CONFIG_FILE" '.finalReportPath')"
 CLAUDE_CMD="$(json_optional "$CONFIG_FILE" '.agents.claude.command')"
 CODEX_CMD="$(json_optional "$CONFIG_FILE" '.agents.codex.command')"
 
+FINAL_REPORT_PATH_FILE="${TASK_DIR}/state/final_report_path.txt"
+if [[ -z "$FINAL_REPORT_PATH" && -f "$FINAL_REPORT_PATH_FILE" ]]; then
+  FINAL_REPORT_PATH="$(tr -d '\r' <"$FINAL_REPORT_PATH_FILE" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+fi
+
 if [[ "$DRY_RUN" -eq 0 && -z "$CLAUDE_CMD" ]] && is_claude_code_session; then
   fail "Claude Code session detected. This workflow invokes the claude CLI, which cannot run inside Claude Code. Run it from an external terminal, or use --dry-run to generate prompts only."
 fi
