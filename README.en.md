@@ -2,9 +2,25 @@
 
 [English](README.en.md) | [中文](README.md)
 
-Reusable implementation-audit skills and automation assets for a Claude + Codex co-audit workflow.
+Primarily a Claude Code plugin with implementation-audit skills and automation assets for a Claude + Codex co-audit workflow.
 
 ## Installation
+
+### Claude Code (Plugin)
+
+In Claude Code, add this GitHub repo as a plugin marketplace:
+
+```text
+/plugin marketplace add BeMxself/ai-co-audit-skills
+```
+
+Then install the plugin:
+
+```text
+/plugin install implementation-audit@BeMxself-ai-co-audit-skills
+```
+
+After installation, use `/implementation-audit` to invoke the skill.
 
 ### Codex (Skills)
 

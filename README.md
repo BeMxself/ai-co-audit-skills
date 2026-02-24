@@ -2,9 +2,25 @@
 
 [中文](README.md) | [English](README.en.md)
 
-一组可复用的“实现审计”skills 与自动化脚本，用于 Claude + Codex 协作审计并输出最终报告。
+一组以 Claude Code 插件为主的“实现审计”skills 与自动化脚本，用于 Claude + Codex 协作审计并输出最终报告。
 
 ## 安装
+
+### Claude Code（插件）
+
+在 Claude Code 中把本 GitHub 仓库添加为插件市场（Marketplace）：
+
+```text
+/plugin marketplace add BeMxself/ai-co-audit-skills
+```
+
+然后安装插件：
+
+```text
+/plugin install implementation-audit@BeMxself-ai-co-audit-skills
+```
+
+安装完成后，可用 `/implementation-audit` 调用相关技能。
 
 ### Codex (Skills)
 
