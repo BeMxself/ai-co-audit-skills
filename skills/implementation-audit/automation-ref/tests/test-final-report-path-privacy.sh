@@ -39,22 +39,7 @@ if [[ -z "$task_dir" ]]; then
   exit 1
 fi
 
-if rg -n "implementation-audit-auto" "${task_dir}/config/task.json" >/dev/null 2>&1; then
-  echo "finalReportPath leaked into task.json"
-  exit 1
-fi
-
-if rg -n "implementation-audit-auto" "${task_dir}/README.md" >/dev/null 2>&1; then
-  echo "finalReportPath leaked into task README"
-  exit 1
-fi
-
-path_file="${task_dir}/state/final_report_path.txt"
-if [[ ! -f "$path_file" ]]; then
-  echo "final report path file missing"
-  exit 1
-fi
-if ! rg -n "implementation-audit-auto" "$path_file" >/dev/null 2>&1; then
-  echo "final report path not persisted in state file"
+if rg -n "implementation-audit-auto" "${task_dir}" >/dev/null 2>&1; then
+  echo "final report path leaked into task directory"
   exit 1
 fi

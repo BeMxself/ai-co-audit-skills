@@ -24,7 +24,6 @@ INPUTS=()
 AUTO_META_WITH_CLAUDE=1
 USER_PROVIDED_TASK_ID=0
 DEFAULT_OBJECTIVE="检查未完成的、与设计不符合的、违反设计原则的、重复实现的、逻辑不能自洽的、实现存在矛盾的问题，并给出可验证证据（文件路径 + 行号）。"
-FINAL_REPORT_PATH_FILE=""
 
 slugify() {
   local raw="$1"
@@ -338,11 +337,6 @@ ensure_dir "$TASK_DIR/transcripts"
 printf "%s\n" "${INPUTS[@]}" >"${TASK_DIR}/inputs/targets.txt"
 printf "%s\n" "$OBJECTIVE" >"${TASK_DIR}/inputs/objective.txt"
 
-FINAL_REPORT_PATH_FILE="${TASK_DIR}/state/final_report_path.txt"
-if [[ -n "$FINAL_REPORT_PATH" ]]; then
-  printf "%s\n" "$FINAL_REPORT_PATH" >"$FINAL_REPORT_PATH_FILE"
-fi
-
 inputs_json="$(printf "%s\n" "${INPUTS[@]}" | jq -R . | jq -s .)"
 
 jq -n \
@@ -434,6 +428,14 @@ cat >"${TASK_DIR}/README.md" <<EOF
 - Progress checkpoint: \`.ai-workflows/${TASK_ID}/state/progress.json\`
 - State: \`.ai-workflows/${TASK_ID}/state/state.json\`
 - Final report export path (if configured): \`${FINAL_REPORT_PATH_DISPLAY}\`
+
+## Export Final Report (manual)
+
+\`\`\`bash
+automation/implementation-audit/export-final-report.sh \\
+  --task-dir ".ai-workflows/${TASK_ID}" \\
+  --output <path>
+\`\`\`
 EOF
 
 log_info "Task initialized: ${TASK_DIR}"
@@ -444,3 +446,10 @@ Next steps (run in terminal):
   ./.ai-workflows/${TASK_ID}/run
   ./.ai-workflows/${TASK_ID}/continue
 EOF
+
+if [[ -n "$FINAL_REPORT_PATH" ]]; then
+  cat <<EOF
+After completion, export final report:
+  automation/implementation-audit/export-final-report.sh --task-dir ".ai-workflows/${TASK_ID}" --output ${FINAL_REPORT_PATH}
+EOF
+fi
