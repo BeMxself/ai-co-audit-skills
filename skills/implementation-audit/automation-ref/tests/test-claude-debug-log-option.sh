@@ -56,6 +56,12 @@ if ! grep -Fxq -- "--debug-file" "${args_file}"; then
   exit 1
 fi
 
+if ! grep -Fxq -- "--disable-slash-commands" "${args_file}"; then
+  echo "expected --disable-slash-commands option in claude command"
+  cat "${args_file}"
+  exit 1
+fi
+
 if ! grep -Fxq -- "${log_file}" "${args_file}"; then
   echo "expected log file path passed to --debug-file"
   cat "${args_file}"
