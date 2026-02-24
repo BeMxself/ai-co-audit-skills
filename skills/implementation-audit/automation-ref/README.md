@@ -128,7 +128,7 @@ bash automation/implementation-audit/init.sh \
 - `maxRounds`
 
 可选字段：
-- `timeoutSeconds`（默认 `3600`）
+- `timeoutSeconds`（默认 `7200`）
 - `workingDirectory`（默认 `.`）
 - `finalReportPath`（相对 `workingDirectory` 的输出路径；为避免泄露给 agent，默认不写入任务配置，而是写入 `run/continue` 参数）
 - `successMarker`（默认使用上面的成功标记串）

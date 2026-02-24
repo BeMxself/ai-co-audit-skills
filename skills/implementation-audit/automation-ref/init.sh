@@ -13,7 +13,7 @@ OBJECTIVE=""
 OBJECTIVE_FILE=""
 REPORT_BASE_NAME=""
 MAX_ROUNDS="15"
-TIMEOUT_SECONDS="3600"
+TIMEOUT_SECONDS="7200"
 WORKING_DIRECTORY="."
 FINAL_REPORT_PATH=""
 SUCCESS_MARKER="当前版本已无问题，可以作为正式版本使用"
@@ -169,7 +169,7 @@ Options:
   --objective <text>        Alias of --prompt
   --objective-file <file>   Alias of --prompt-file
   --max-rounds <n>          Max review rounds (default: 15)
-  --timeout-seconds <n>     Per-agent timeout (default: 1800)
+  --timeout-seconds <n>     Per-agent timeout (default: 7200)
   --working-directory <dir> Working directory for agent commands (default: .)
   --final-report-path <p>   Save final merged report to this relative path (relative to working directory)
   --success-marker <text>   Loop-exit marker string

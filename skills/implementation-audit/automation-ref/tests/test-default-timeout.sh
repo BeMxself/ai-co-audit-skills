@@ -38,7 +38,7 @@ if [[ -z "$task_dir" ]]; then
 fi
 
 timeout_val="$(jq -r '.timeoutSeconds' "${task_dir}/config/task.json")"
-if [[ "$timeout_val" != "3600" ]]; then
-  echo "expected default timeoutSeconds=3600, got: ${timeout_val}"
+if [[ "$timeout_val" != "7200" ]]; then
+  echo "expected default timeoutSeconds=7200, got: ${timeout_val}"
   exit 1
 fi

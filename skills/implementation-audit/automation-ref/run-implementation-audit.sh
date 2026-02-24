@@ -18,7 +18,7 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
-PLUGIN_VERSION="1.1.7"
+PLUGIN_VERSION="1.1.8"
 
 confirm_run_start() {
   local answer=""
@@ -165,7 +165,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
 fi
 
 [[ -n "$SUCCESS_MARKER" ]] || SUCCESS_MARKER="当前版本已无问题，可以作为正式版本使用"
-[[ -n "$TIMEOUT_SECONDS" ]] || TIMEOUT_SECONDS="1800"
+[[ -n "$TIMEOUT_SECONDS" ]] || TIMEOUT_SECONDS="7200"
 [[ -n "$WORKING_DIRECTORY" ]] || WORKING_DIRECTORY="."
 
 if [[ -n "$MAX_ROUNDS_OVERRIDE" ]]; then
