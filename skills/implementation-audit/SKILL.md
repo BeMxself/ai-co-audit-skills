@@ -46,6 +46,13 @@ bash automation/implementation-audit/sync-automation.sh "${REFERENCE_DIR}" "${TA
 bash automation/implementation-audit/init.sh --input <file> [--input <file> ...] [--prompt "..."] [--final-report-path <relative-path>]
 ```
 
+When invoked inside Claude Code:
+Run init only, then stop.
+Print the user command guide and ask them to execute it in a terminal:
+`./.ai-workflows/<task-id>/run`
+`./.ai-workflows/<task-id>/continue`
+Do not run `run` or `continue` inside Claude Code.
+
 ### Run Task
 
 ```bash

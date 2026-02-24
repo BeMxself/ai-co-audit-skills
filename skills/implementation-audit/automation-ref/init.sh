@@ -430,3 +430,9 @@ EOF
 
 log_info "Task initialized: ${TASK_DIR}"
 log_info "Entry scripts: ${TASK_DIR}/run , ${TASK_DIR}/continue"
+
+cat <<EOF
+Next steps (run in terminal):
+  ./.ai-workflows/${TASK_ID}/run
+  ./.ai-workflows/${TASK_ID}/continue
+EOF

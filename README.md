@@ -22,7 +22,7 @@
 
 安装完成后，可用 `/implementation-audit` 调用相关技能。
 
-注意：自动化 `run` / `continue` 会调用 `claude` CLI，无法在 Claude Code 会话内嵌套执行。请在独立终端运行，或使用 `--dry-run` 仅生成 prompts。
+注意：自动化 `run` / `continue` 会调用 `claude` CLI，无法在 Claude Code 会话内嵌套执行。在 Claude Code 中应只完成初始化并输出命令指南，然后在独立终端运行，或使用 `--dry-run` 仅生成 prompts。
 
 ### Codex (Skills)
 
