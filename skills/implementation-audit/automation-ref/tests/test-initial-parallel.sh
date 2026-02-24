@@ -29,11 +29,14 @@ mkdir -p "${tmp_dir}/bin"
 cat >"${tmp_dir}/bin/claude" <<EOF
 #!/usr/bin/env bash
 count_file="${tmp_dir}/claude.count"
-flag_file="${tmp_dir}/sequential.flag"
+overlap_file="${tmp_dir}/parallel.overlap"
+running_file="${tmp_dir}/claude.running"
+other_running_file="${tmp_dir}/codex.running"
 touch "${tmp_dir}/claude.started"
+touch "\${running_file}"
 sleep 0.5
-if [[ ! -f "${tmp_dir}/codex.started" ]]; then
-  echo "claude-before-codex" >"\${flag_file}"
+if [[ -f "\${other_running_file}" ]]; then
+  echo "overlap" >"\${overlap_file}"
 fi
 count=0
 if [[ -f "\${count_file}" ]]; then
@@ -44,18 +47,27 @@ echo "\${count}" >"\${count_file}"
 if [[ "\${count}" -eq 1 ]]; then
   sleep 1
 fi
-echo "ok"
+prompt_payload="\$(cat)"
+output_path="\$(printf "%s\n" "\$prompt_payload" | sed -n 's/^__OUTPUT_FILE_PATH__=//p' | tail -n 1)"
+if [[ -n "\$output_path" ]]; then
+  echo "ok" >"\$output_path"
+fi
+echo "OUTPUT_WRITTEN"
+rm -f "\${running_file}"
 exit 0
 EOF
 
 cat >"${tmp_dir}/bin/codex" <<EOF
 #!/usr/bin/env bash
 count_file="${tmp_dir}/codex.count"
-flag_file="${tmp_dir}/sequential.flag"
+overlap_file="${tmp_dir}/parallel.overlap"
+running_file="${tmp_dir}/codex.running"
+other_running_file="${tmp_dir}/claude.running"
 touch "${tmp_dir}/codex.started"
+touch "\${running_file}"
 sleep 0.5
-if [[ ! -f "${tmp_dir}/claude.started" ]]; then
-  echo "codex-before-claude" >"\${flag_file}"
+if [[ -f "\${other_running_file}" ]]; then
+  echo "overlap" >"\${overlap_file}"
 fi
 count=0
 if [[ -f "\${count_file}" ]]; then
@@ -79,6 +91,7 @@ done
 if [[ -n "\${out}" ]]; then
   echo "ok" >"\${out}"
 fi
+rm -f "\${running_file}"
 exit 0
 EOF
 
@@ -108,8 +121,7 @@ if ! echo "$output" | grep -q "Round 01/1"; then
   exit 1
 fi
 
-if [[ -f "${tmp_dir}/sequential.flag" ]]; then
-  echo "expected initial analyses to run in parallel"
-  cat "${tmp_dir}/sequential.flag"
+if [[ ! -f "${tmp_dir}/parallel.overlap" ]]; then
+  echo "expected initial analyses to overlap in execution (parallel run)"
   exit 1
 fi

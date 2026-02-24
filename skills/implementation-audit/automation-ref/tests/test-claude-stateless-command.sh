@@ -21,8 +21,12 @@ mkdir -p "${tmp_dir}/bin"
 cat >"${tmp_dir}/bin/claude" <<EOF
 #!/usr/bin/env bash
 printf "%s\n" "\$@" >"${args_file}"
-cat >/dev/null
-printf "ok\n"
+prompt_payload="\$(cat)"
+output_path="\$(printf "%s\n" "\$prompt_payload" | sed -n 's/^__OUTPUT_FILE_PATH__=//p' | tail -n 1)"
+if [[ -n "\$output_path" ]]; then
+  printf "ok\n" >"\$output_path"
+fi
+printf "OUTPUT_WRITTEN\n"
 EOF
 chmod +x "${tmp_dir}/bin/claude"
 
@@ -46,6 +50,12 @@ fi
 
 if ! grep -Fxq -- "--dangerously-skip-permissions" "${args_file}"; then
   echo "expected --dangerously-skip-permissions option in claude command"
+  cat "${args_file}"
+  exit 1
+fi
+
+if grep -Fxq -- "--debug-file" "${args_file}"; then
+  echo "expected --debug-file to be disabled by default"
   cat "${args_file}"
   exit 1
 fi

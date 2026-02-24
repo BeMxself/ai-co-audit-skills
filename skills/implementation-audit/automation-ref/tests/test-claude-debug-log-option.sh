@@ -13,6 +13,7 @@ trap cleanup EXIT
 prompt_file="${tmp_dir}/prompt.txt"
 output_file="${tmp_dir}/report.md"
 log_file="${tmp_dir}/claude.log"
+debug_log_file="${log_file}.debug"
 args_file="${tmp_dir}/claude.args"
 
 printf "test prompt\n" >"${prompt_file}"
@@ -37,13 +38,18 @@ if [[ -n "$debug_file" ]]; then
   echo "debug-log-enabled" >"$debug_file"
 fi
 
-cat >/dev/null
+prompt_payload="$(cat)"
+output_path="$(printf "%s\n" "$prompt_payload" | sed -n 's/^__OUTPUT_FILE_PATH__=//p' | tail -n 1)"
+if [[ -n "$output_path" ]]; then
+  echo "report-body" >"$output_path"
+fi
 echo "stderr-log-line" >&2
-echo "report-body"
+echo "OUTPUT_WRITTEN"
 EOF
 chmod +x "${tmp_dir}/bin/claude"
 
 export CLAUDE_ARGS_FILE="${args_file}"
+export IMPLEMENTATION_AUDIT_CLAUDE_DEBUG=1
 export PATH="${tmp_dir}/bin:${PATH}"
 # shellcheck source=../lib/runner.sh
 source "${RUNNER_SH}"
@@ -56,15 +62,15 @@ if ! grep -Fxq -- "--debug-file" "${args_file}"; then
   exit 1
 fi
 
-if ! grep -Fxq -- "${log_file}" "${args_file}"; then
+if ! grep -Fxq -- "${debug_log_file}" "${args_file}"; then
   echo "expected log file path passed to --debug-file"
   cat "${args_file}"
   exit 1
 fi
 
-if ! grep -q "debug-log-enabled" "${log_file}"; then
+if ! grep -q "debug-log-enabled" "${debug_log_file}"; then
   echo "expected debug-file output in log file"
-  cat "${log_file}"
+  cat "${debug_log_file}"
   exit 1
 fi
 
