@@ -12,6 +12,7 @@ source "${SCRIPT_DIR}/lib/runner.sh"
 TASK_DIR=""
 CONFIG_FILE=""
 MAX_ROUNDS_OVERRIDE=""
+TIMEOUT_SECONDS_OVERRIDE=""
 DRY_RUN=0
 RESUME=0
 RESUME_FROM_PHASE=""
@@ -27,6 +28,7 @@ Options:
   --task-dir <dir>       Task directory under .ai-workflows (required)
   --config <file>        Task config json path (default: <task-dir>/config/task.json)
   --max-rounds <n>       Override maxRounds from config
+  --timeout-seconds <n>  Override timeoutSeconds from config
   --final-report-path <p> Override final report export path (relative to working directory)
   --resume               Resume from state/progress.json checkpoint
   --from-phase <phase>   Force resume from a specific phase (use with --resume)
@@ -48,6 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-rounds)
       MAX_ROUNDS_OVERRIDE="$2"
+      shift 2
+      ;;
+    --timeout-seconds)
+      TIMEOUT_SECONDS_OVERRIDE="$2"
       shift 2
       ;;
     --final-report-path)
@@ -113,6 +119,10 @@ CODEX_CMD="$(json_optional "$CONFIG_FILE" '.agents.codex.command')"
 
 if [[ -n "$FINAL_REPORT_PATH_OVERRIDE" ]]; then
   FINAL_REPORT_PATH="$FINAL_REPORT_PATH_OVERRIDE"
+fi
+
+if [[ -n "$TIMEOUT_SECONDS_OVERRIDE" ]]; then
+  TIMEOUT_SECONDS="$TIMEOUT_SECONDS_OVERRIDE"
 fi
 
 
@@ -588,6 +598,7 @@ log_info "Task dir: ${TASK_DIR}"
 log_info "Config: ${CONFIG_FILE}"
 log_info "Working directory: ${WORKDIR}"
 log_info "Max rounds: ${MAX_ROUNDS}"
+log_info "Timeout seconds: ${TIMEOUT_SECONDS}"
 log_info "Success marker: ${SUCCESS_MARKER}"
 if [[ -n "$FINAL_REPORT_PATH" ]]; then
   log_info "Final report path (relative to working directory): ${FINAL_REPORT_PATH}"
