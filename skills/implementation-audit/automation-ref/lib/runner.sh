@@ -25,8 +25,8 @@ run_agent() {
         (
           cd "$workdir"
           timeout "${timeout_seconds}s" \
-            claude -p --dangerously-skip-permissions - \
-            <"$prompt_file" >"$output_file" 2>"$log_file"
+            claude -p --dangerously-skip-permissions --debug-file "$log_file" - \
+            <"$prompt_file" >"$output_file" 2>>"$log_file"
         )
         rc=$?
         ;;
