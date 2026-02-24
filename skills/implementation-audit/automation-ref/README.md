@@ -69,7 +69,7 @@ bash automation/implementation-audit/init.sh \
 ## 流程阶段
 
 1. 初始审计：
-- `claude` 和 `codex` 使用同一提示词，分别输出两份报告。
+- `claude` 和 `codex` 使用同一提示词，分别输出两份报告（并行执行）。
 2. 交叉对比：
 - `claude` 和 `codex` 分别对两份初始报告做对比分析。
 3. 合并报告：
@@ -155,3 +155,4 @@ bash automation/implementation-audit/init.sh \
 - 最终状态写入 `state/state.json`。
 - 审计过程会生成对话式转录文件：`transcripts/implementation-audit-dialogue.md`，便于人工复核。
 - 如果你希望强制不用 claude 生成元信息，可在初始化时加 `--no-claude-meta`。
+- 运行日志会显示当前阶段与迭代轮次，便于跟踪进度。

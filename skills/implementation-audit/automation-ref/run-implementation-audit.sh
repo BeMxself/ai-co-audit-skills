@@ -188,6 +188,115 @@ MERGED_REPORT="${REPORTS_MERGED_DIR}/${REPORT_BASE_NAME}.md"
 FINAL_REPORT_OUTPUT_ABS=""
 PROMPT_INLINE_WARN_BYTES=200000
 
+run_initial_phase() {
+  local need_claude=1
+  local need_codex=1
+  local ran_claude=0
+  local ran_codex=0
+  local claude_rc_file="${LOGS_DIR}/.rc-initial-claude"
+  local codex_rc_file="${LOGS_DIR}/.rc-initial-codex"
+  local rc=0
+  local final_status=""
+
+  if [[ -s "$CLAUDE_INITIAL_REPORT" ]]; then
+    need_claude=0
+  fi
+  if [[ -s "$CODEX_INITIAL_REPORT" ]]; then
+    need_codex=0
+  fi
+
+  if [[ "$need_claude" -eq 0 && "$need_codex" -eq 0 ]]; then
+    log_info "Phase start: initial (skip, reports already exist)"
+    log_info "Phase done: initial (skip, reports already exist)"
+    return 0
+  fi
+
+  if [[ "$need_claude" -eq 1 && "$need_codex" -eq 1 ]]; then
+    log_info "Phase start: initial (claude+codex)"
+
+    rm -f "$claude_rc_file" "$codex_rc_file"
+    (
+      run_agent "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
+        "${LOGS_DIR}/01-initial-claude.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$CLAUDE_CMD"
+      echo $? >"$claude_rc_file"
+    ) &
+    claude_pid=$!
+
+    (
+      run_agent "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT" \
+        "${LOGS_DIR}/01-initial-codex.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$CODEX_CMD"
+      echo $? >"$codex_rc_file"
+    ) &
+    codex_pid=$!
+
+    wait "$claude_pid" || true
+    wait "$codex_pid" || true
+
+    ran_claude=1
+    ran_codex=1
+
+    rc=0
+    if [[ -f "$claude_rc_file" ]]; then
+      rc="$(cat "$claude_rc_file" || echo 1)"
+    else
+      rc=1
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+      if [[ "$rc" -eq 124 ]]; then
+        final_status="failed-timeout-initial-claude"
+      else
+        final_status="failed-initial-claude-exit-${rc}"
+      fi
+      write_progress_json "failed" "initial-claude" "$NEXT_ROUND" "$final_status" "initial-claude"
+      fail "agent failed at step initial-claude (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
+    fi
+
+    rc=0
+    if [[ -f "$codex_rc_file" ]]; then
+      rc="$(cat "$codex_rc_file" || echo 1)"
+    else
+      rc=1
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+      if [[ "$rc" -eq 124 ]]; then
+        final_status="failed-timeout-initial-codex"
+      else
+        final_status="failed-initial-codex-exit-${rc}"
+      fi
+      write_progress_json "failed" "initial-codex" "$NEXT_ROUND" "$final_status" "initial-codex"
+      fail "agent failed at step initial-codex (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
+    fi
+
+    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
+    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
+    log_info "Phase done: initial (claude+codex)"
+    return 0
+  fi
+
+  if [[ "$need_claude" -eq 1 ]]; then
+    log_info "Phase start: initial (claude)"
+    run_agent_checked "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
+      "${LOGS_DIR}/01-initial-claude.log" "initial-claude" "$CLAUDE_CMD"
+    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
+    log_info "Phase done: initial (claude)"
+    ran_claude=1
+  fi
+
+  if [[ "$need_codex" -eq 1 ]]; then
+    log_info "Phase start: initial (codex)"
+    NEXT_PHASE="initial-codex"
+    run_agent_checked "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT" \
+      "${LOGS_DIR}/01-initial-codex.log" "initial-codex" "$CODEX_CMD"
+    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
+    log_info "Phase done: initial (codex)"
+    ran_codex=1
+  fi
+
+  if [[ "$ran_claude" -eq 1 && "$ran_codex" -eq 1 ]]; then
+    return 0
+  fi
+}
+
 build_input_list() {
   local out=""
   local f
@@ -547,44 +656,46 @@ fi
 while :; do
   case "$NEXT_PHASE" in
     initial-claude)
-      run_agent_checked "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
-        "${LOGS_DIR}/01-initial-claude.log" "initial-claude" "$CLAUDE_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
-      NEXT_PHASE="initial-codex"
+      run_initial_phase
+      NEXT_PHASE="compare-claude"
       write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-claude"
       ;;
 
     initial-codex)
-      run_agent_checked "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT" \
-        "${LOGS_DIR}/01-initial-codex.log" "initial-codex" "$CODEX_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
+      run_initial_phase
       NEXT_PHASE="compare-claude"
       write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-codex"
       ;;
 
     compare-claude)
+      log_info "Phase start: compare-claude"
       build_compare_prompt
       run_agent_checked "claude" "$COMPARE_PROMPT" "$CLAUDE_COMPARE_REPORT" \
         "${LOGS_DIR}/02-compare-claude.log" "compare-claude" "$CLAUDE_CMD"
       append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "claude" "$COMPARE_PROMPT" "$CLAUDE_COMPARE_REPORT"
+      log_info "Phase done: compare-claude"
       NEXT_PHASE="compare-codex"
       write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-claude"
       ;;
 
     compare-codex)
+      log_info "Phase start: compare-codex"
       build_compare_prompt
       run_agent_checked "codex" "$COMPARE_PROMPT" "$CODEX_COMPARE_REPORT" \
         "${LOGS_DIR}/02-compare-codex.log" "compare-codex" "$CODEX_CMD"
       append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "codex" "$COMPARE_PROMPT" "$CODEX_COMPARE_REPORT"
+      log_info "Phase done: compare-codex"
       NEXT_PHASE="merge-claude"
       write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-codex"
       ;;
 
     merge-claude)
+      log_info "Phase start: merge-claude"
       build_merge_prompt
       run_agent_checked "claude" "$MERGE_PROMPT" "$MERGED_REPORT" \
         "${LOGS_DIR}/03-merge-claude.log" "merge-claude" "$CLAUDE_CMD"
       append_dialogue_entry "$TRANSCRIPT_FILE" "Merge Reports" "claude" "$MERGE_PROMPT" "$MERGED_REPORT"
+      log_info "Phase done: merge-claude"
       NEXT_PHASE="round-codex"
       NEXT_ROUND=1
       write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "merge-claude"
@@ -600,6 +711,7 @@ while :; do
 
       LAST_ROUND_EXECUTED="$NEXT_ROUND"
       round_label="$(printf '%02d' "$NEXT_ROUND")"
+      log_info "Round ${round_label}/${MAX_ROUNDS} start: codex review"
       codex_prompt="$(build_codex_round_prompt "$round_label")"
       codex_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-codex-review.md"
       codex_log_file="${LOGS_DIR}/04-round-${round_label}-codex-review.log"
@@ -607,6 +719,7 @@ while :; do
       run_agent_checked "codex" "$codex_prompt" "$codex_review_file" \
         "$codex_log_file" "round-${round_label}-codex" "$CODEX_CMD"
       append_dialogue_entry "$TRANSCRIPT_FILE" "Round ${round_label} Review" "codex" "$codex_prompt" "$codex_review_file"
+      log_info "Round ${round_label}/${MAX_ROUNDS} done: codex review"
 
       if contains_marker "$codex_review_file" "$SUCCESS_MARKER"; then
         status="accepted-by-codex-round-${round_label}"
@@ -630,6 +743,7 @@ while :; do
       LAST_ROUND_EXECUTED="$NEXT_ROUND"
       round_label="$(printf '%02d' "$NEXT_ROUND")"
       codex_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-codex-review.md"
+      log_info "Round ${round_label}/${MAX_ROUNDS} start: claude revision"
       claude_prompt="$(build_claude_round_prompt "$round_label" "$codex_review_file")"
       claude_revision_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-claude-revision.md"
       claude_log_file="${LOGS_DIR}/05-round-${round_label}-claude-revision.log"
@@ -637,6 +751,7 @@ while :; do
       run_agent_checked "claude" "$claude_prompt" "$claude_revision_file" \
         "$claude_log_file" "round-${round_label}-claude" "$CLAUDE_CMD"
       append_dialogue_entry "$TRANSCRIPT_FILE" "Round ${round_label} Revision" "claude" "$claude_prompt" "$claude_revision_file"
+      log_info "Round ${round_label}/${MAX_ROUNDS} done: claude revision"
 
       if contains_marker "$claude_revision_file" "$SUCCESS_MARKER"; then
         status="claude-rejected-all-feedback-round-${round_label}"
