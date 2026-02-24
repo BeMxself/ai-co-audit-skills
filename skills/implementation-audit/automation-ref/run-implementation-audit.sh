@@ -18,6 +18,31 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
+PLUGIN_VERSION="1.1.0"
+
+confirm_run_start() {
+  local answer=""
+
+  log_info "Plugin version: ${PLUGIN_VERSION}"
+  if [[ ! -t 0 ]]; then
+    log_info "Non-interactive stdin detected. Auto-continue."
+    return 0
+  fi
+
+  printf "Continue with implementation audit? [y/N]: "
+  if ! IFS= read -r answer; then
+    answer=""
+  fi
+  case "$answer" in
+    y|Y)
+      log_info "Confirmation accepted. Continue."
+      ;;
+    *)
+      log_warn "User cancelled run at confirmation step."
+      exit 3
+      ;;
+  esac
+}
 
 usage() {
   cat <<'USAGE'
@@ -162,6 +187,8 @@ while IFS= read -r input_file; do
   INPUT_FILES+=("$input_file")
 done < <(jq -er '.inputs[]' "$CONFIG_FILE")
 [[ "${#INPUT_FILES[@]}" -gt 0 ]] || fail "config.inputs must not be empty"
+
+confirm_run_start
 
 PROMPTS_DIR="${TASK_DIR}/prompts"
 REPORTS_INITIAL_DIR="${TASK_DIR}/reports/initial"

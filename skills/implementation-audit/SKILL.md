@@ -61,6 +61,8 @@ To avoid leaking the output path into task config, `--final-report-path` is embe
 .ai-workflows/<task-id>/run
 ```
 
+`run` reads task config first, prints plugin version, then asks for one-time confirmation in interactive terminals (`y` to continue). In non-interactive terminals, it auto-continues.
+
 ### Continue Task
 
 ```bash
@@ -85,7 +87,8 @@ Valid phases:
 
 ## Notes
 
-- Do not rely on shell interactive input for control flow.
+- `init` must remain non-interactive.
+- `run` may ask one startup confirmation in interactive terminals; non-interactive terminals must auto-continue.
 - Keep workflow files under `.ai-workflows/<task-id>/`.
 - `--final-report-path` must be relative to `workingDirectory`.
 - When running inside Claude Code, avoid calling `.ai-workflows/<task-id>/run` directly since it invokes the `claude` CLI. Use an external terminal or `--dry-run` to generate prompts only.
