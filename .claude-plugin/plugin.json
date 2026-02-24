@@ -1,7 +1,7 @@
 {
   "name": "implementation-audit",
   "description": "Implementation audit workflow for Claude Code and Codex co-audit",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "author": {
     "name": "songmingxu"
   }
