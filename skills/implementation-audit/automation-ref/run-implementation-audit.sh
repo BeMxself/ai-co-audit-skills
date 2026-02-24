@@ -205,6 +205,47 @@ $(cat "$file")
 EOF_BLOCK
 }
 
+normalize_output() {
+  tr -d '\r' \
+    | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+}
+
+validate_agent_output() {
+  local step_name="$1"
+  local output_file="$2"
+  local normalized=""
+  local non_empty_lines=0
+  local is_marker=0
+
+  normalized="$(normalize_output <"$output_file")"
+  non_empty_lines="$(printf "%s\n" "$normalized" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+
+  if [[ -n "$SUCCESS_MARKER" && "$normalized" == "$SUCCESS_MARKER" ]]; then
+    is_marker=1
+  fi
+
+  if [[ "$step_name" == round-* ]]; then
+    if [[ "$is_marker" -eq 1 ]]; then
+      return 0
+    fi
+  else
+    if [[ "$is_marker" -eq 1 ]]; then
+      fail "invalid agent output for ${step_name}: unexpected success marker"
+    fi
+  fi
+
+  if echo "$normalized" | grep -E -q "(审查报告|报告).*(已写入|写入)"; then
+    fail "invalid agent output for ${step_name}: report-write statement detected"
+  fi
+  if echo "$normalized" | grep -E -qi "report (was )?written"; then
+    fail "invalid agent output for ${step_name}: report-write statement detected"
+  fi
+
+  if [[ "$non_empty_lines" -lt 2 ]]; then
+    fail "invalid agent output for ${step_name}: output too short"
+  fi
+}
+
 build_initial_prompt() {
   cat >"$INITIAL_PROMPT" <<EOF_PROMPT
 你是资深评审工程师。请基于以下输入材料进行实现一致性会审。
@@ -222,6 +263,7 @@ $(build_input_list)
 4. 每条问题必须给出可验证证据（文件路径 + 行号）。
 5. 最后补充：未阻断但建议跟进项。
 6. 只输出报告正文，不要额外说明文字。
+7. 禁止声称“已写入/保存文件”或输出与写入相关的说明。
 EOF_PROMPT
 }
 
@@ -245,6 +287,7 @@ EOF_PROMPT
 3. 对冲突点标注你认为更可信的一方并说明依据。
 4. 给出后续合并建议（保留、降级、删除、待确认）。
 5. 只输出对比分析正文，不要额外说明文字。
+6. 禁止声称“已写入/保存文件”或输出与写入相关的说明。
 EOF_PROMPT
   } >"$COMPARE_PROMPT"
 }
@@ -274,6 +317,7 @@ EOF_PROMPT
 2. 保留可验证问题，去除已证伪或证据不足项。
 3. 所有问题按严重级别排序并包含证据路径+行号。
 4. 加入“审查边界/待确认项”。
+5. 禁止声称“已写入/保存文件”或输出与写入相关的说明。
 EOF_PROMPT
   } >"$MERGE_PROMPT"
 }
@@ -299,6 +343,7 @@ EOF_PROMPT
 - 如果你认为当前版本已无问题，或你提出的意见全部可视为不必采纳，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则输出“问题清单（按严重级）”，每条包含修改建议。
+- 禁止声称“已写入/保存文件”或输出与写入相关的说明。
 EOF_PROMPT
   } >"$prompt_file"
   echo "$prompt_file"
@@ -325,6 +370,7 @@ EOF_PROMPT
 - 如果你决定“全部不采纳 codex 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则请输出“修订后的完整 Markdown 报告正文”（完整替换版本，不要解释）。
+- 禁止声称“已写入/保存文件”或输出与写入相关的说明。
 EOF_PROMPT
   } >"$prompt_file"
   echo "$prompt_file"
@@ -412,6 +458,8 @@ run_agent_checked() {
     write_progress_json "failed" "$NEXT_PHASE" "$NEXT_ROUND" "$final_status" "$step_name"
     fail "agent failed at step ${step_name} (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
   fi
+
+  validate_agent_output "$step_name" "$output_file"
 }
 
 init_transcript_fresh() {
