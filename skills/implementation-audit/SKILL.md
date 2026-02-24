@@ -15,7 +15,9 @@ This skill installs/syncs implementation-audit automation assets into the curren
 - `SKILL_DIR`: directory containing this `SKILL.md`.
 - `PROJECT_REFERENCE_DIR`: `${PROJECT_ROOT}/skills/implementation-audit/automation-ref`.
 - `SKILL_REFERENCE_DIR`: `${SKILL_DIR}/automation-ref`.
-- `REFERENCE_DIR`: resolved source directory (must not be under `~/.claude/plugins/cache`).
+- `FALLBACK_SOURCE_DIR`: `${AI_CO_AUDIT_SKILLS_SOURCE_DIR:-$HOME/Projects/ai-co-audit-skills}`.
+- `FALLBACK_REFERENCE_DIR`: `${FALLBACK_SOURCE_DIR}/skills/implementation-audit/automation-ref`.
+- `REFERENCE_DIR`: resolved source directory.
 - `TARGET_DIR`: `${PROJECT_ROOT}/automation/implementation-audit`.
 
 Resolve `REFERENCE_DIR` before Step 1:
@@ -23,13 +25,13 @@ Resolve `REFERENCE_DIR` before Step 1:
 ```bash
 PROJECT_REFERENCE_DIR="${PROJECT_ROOT}/skills/implementation-audit/automation-ref"
 SKILL_REFERENCE_DIR="${SKILL_DIR}/automation-ref"
+FALLBACK_SOURCE_DIR="${AI_CO_AUDIT_SKILLS_SOURCE_DIR:-$HOME/Projects/ai-co-audit-skills}"
+FALLBACK_REFERENCE_DIR="${FALLBACK_SOURCE_DIR}/skills/implementation-audit/automation-ref"
 
 if [[ -d "${PROJECT_REFERENCE_DIR}" ]]; then
   REFERENCE_DIR="${PROJECT_REFERENCE_DIR}"
-elif [[ "${SKILL_REFERENCE_DIR}" == *"/.claude/plugins/cache/"* || "${SKILL_REFERENCE_DIR}" == *"/.claude/plugins/cache" ]]; then
-  echo "Refusing cache reference dir: ${SKILL_REFERENCE_DIR}" >&2
-  echo "Use a non-cache source directory to avoid stale automation assets." >&2
-  exit 2
+elif [[ -d "${FALLBACK_REFERENCE_DIR}" ]]; then
+  REFERENCE_DIR="${FALLBACK_REFERENCE_DIR}"
 else
   REFERENCE_DIR="${SKILL_REFERENCE_DIR}"
 fi
@@ -50,6 +52,8 @@ Run sync check:
 ```bash
 bash automation/implementation-audit/sync-automation.sh "${REFERENCE_DIR}" "${TARGET_DIR}"
 ```
+
+`sync-automation.sh` resolves cache-style reference paths to a non-cache source automatically. If auto-resolution fails, set `AI_CO_AUDIT_SKILLS_SOURCE_DIR` to your `ai-co-audit-skills` checkout root and run again.
 
 If exit code is `1`, show `[MISS]` / `[DIFF]` items and ask user whether to force sync. If user agrees:
 

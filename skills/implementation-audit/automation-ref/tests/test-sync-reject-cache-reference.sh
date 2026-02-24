@@ -15,7 +15,13 @@ target_dir="${tmp_dir}/automation/implementation-audit"
 mkdir -p "${reference_dir}" "${target_dir}"
 
 set +e
-output="$("${SYNC_SCRIPT}" "${reference_dir}" "${target_dir}" 2>&1)"
+output="$(
+  (
+    export HOME="${tmp_dir}"
+    cd "${tmp_dir}"
+    "${SYNC_SCRIPT}" "${reference_dir}" "${target_dir}" 2>&1
+  )
+)"
 rc=$?
 set -e
 
@@ -25,8 +31,8 @@ if [[ "$rc" -eq 0 ]]; then
   exit 1
 fi
 
-if ! echo "$output" | grep -q "Refusing to read Claude cache reference dir"; then
-  echo "expected cache rejection message"
+if ! echo "$output" | grep -q "Could not resolve a non-cache source directory"; then
+  echo "expected non-cache resolution failure message"
   echo "$output"
   exit 1
 fi

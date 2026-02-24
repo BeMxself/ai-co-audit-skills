@@ -16,12 +16,6 @@ if [[ "$TARGET_DIR" != /* ]]; then
   TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
 fi
 
-if [[ "$REFERENCE_DIR" == *"/.claude/plugins/cache/"* || "$REFERENCE_DIR" == *"/.claude/plugins/cache" ]]; then
-  echo "[ERROR] Refusing to read Claude cache reference dir: $REFERENCE_DIR" >&2
-  echo "[ERROR] Use a non-cache source directory to avoid syncing stale assets." >&2
-  exit 2
-fi
-
 FILES=(
   "README.md"
   "init.sh"
@@ -31,16 +25,83 @@ FILES=(
   "lib/runner.sh"
 )
 
+is_cache_reference_dir() {
+  local dir="$1"
+  [[ "$dir" == *"/.claude/plugins/cache/"* || "$dir" == *"/.claude/plugins/cache" ]]
+}
+
+is_valid_reference_dir() {
+  local dir="$1"
+  local f=""
+  [[ -d "$dir" ]] || return 1
+  for f in "${FILES[@]}"; do
+    [[ -f "${dir}/${f}" ]] || return 1
+  done
+  return 0
+}
+
+resolve_non_cache_reference_dir() {
+  local original="$1"
+  local candidate=""
+  local discovered_repo=""
+  local -a candidates=()
+
+  if ! is_cache_reference_dir "$original"; then
+    echo "$original"
+    return 0
+  fi
+
+  if [[ -n "${AI_CO_AUDIT_SKILLS_SOURCE_DIR:-}" ]]; then
+    candidates+=("${AI_CO_AUDIT_SKILLS_SOURCE_DIR%/}/skills/implementation-audit/automation-ref")
+    candidates+=("${AI_CO_AUDIT_SKILLS_SOURCE_DIR%/}")
+  fi
+  candidates+=("${PWD}/skills/implementation-audit/automation-ref")
+  candidates+=("${HOME}/Projects/ai-co-audit-skills/skills/implementation-audit/automation-ref")
+
+  if [[ -d "${HOME}/Projects" ]]; then
+    while IFS= read -r discovered_repo; do
+      candidates+=("${discovered_repo}/skills/implementation-audit/automation-ref")
+    done < <(find "${HOME}/Projects" -maxdepth 4 -type d -name "ai-co-audit-skills" 2>/dev/null | head -n 20)
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    if is_cache_reference_dir "$candidate"; then
+      continue
+    fi
+    if is_valid_reference_dir "$candidate"; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  echo ""
+  return 1
+}
+
+ORIGINAL_REFERENCE_DIR="$REFERENCE_DIR"
+if is_cache_reference_dir "$ORIGINAL_REFERENCE_DIR"; then
+  resolved_reference_dir="$(resolve_non_cache_reference_dir "$ORIGINAL_REFERENCE_DIR" || true)"
+  if [[ -z "$resolved_reference_dir" ]]; then
+    echo "[ERROR] Cache reference detected: $ORIGINAL_REFERENCE_DIR" >&2
+    echo "[ERROR] Could not resolve a non-cache source directory." >&2
+    echo "[ERROR] Set AI_CO_AUDIT_SKILLS_SOURCE_DIR to your ai-co-audit-skills checkout root." >&2
+    exit 2
+  fi
+  REFERENCE_DIR="$resolved_reference_dir"
+  echo "[INFO] Cache reference detected. Using source dir: $REFERENCE_DIR"
+fi
+
+if ! is_valid_reference_dir "$REFERENCE_DIR"; then
+  echo "[ERROR] Invalid reference dir: $REFERENCE_DIR" >&2
+  echo "[ERROR] Expected implementation-audit automation files are missing." >&2
+  exit 2
+fi
+
 NEED_CONFIRM=0
 
 for f in "${FILES[@]}"; do
   source="${REFERENCE_DIR}/${f}"
   target="${TARGET_DIR}/${f}"
-
-  if [[ ! -f "$source" ]]; then
-    echo "[WARN] Reference file missing: $f"
-    continue
-  fi
 
   if [[ ! -f "$target" ]]; then
     if [[ "$AUTO_COPY" == "--auto-copy" ]]; then
