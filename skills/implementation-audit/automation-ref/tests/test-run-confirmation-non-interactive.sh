@@ -34,7 +34,7 @@ if [[ "$rc" -ne 0 ]]; then
   exit 1
 fi
 
-if ! echo "$output" | grep -q "Plugin version: 1.1.3"; then
+if ! echo "$output" | grep -q "Plugin version: 1.1.5"; then
   echo "expected plugin version output"
   echo "$output"
   exit 1

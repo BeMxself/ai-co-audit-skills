@@ -18,7 +18,7 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
-PLUGIN_VERSION="1.1.3"
+PLUGIN_VERSION="1.1.5"
 
 confirm_run_start() {
   local answer=""
@@ -379,6 +379,7 @@ $(build_input_list)
 4. 每条问题必须给出可验证证据（文件路径 + 行号）。
 5. 最后补充：未阻断但建议跟进项。
 6. 只输出报告正文，不要额外说明文字。
+7. 不要创建、修改或写入任何文件；直接在当前响应输出完整报告正文。
 EOF_PROMPT
 }
 
@@ -402,6 +403,7 @@ EOF_PROMPT
 3. 对冲突点标注你认为更可信的一方并说明依据。
 4. 给出后续合并建议（保留、降级、删除、待确认）。
 5. 只输出对比分析正文，不要额外说明文字。
+6. 不要创建、修改或写入任何文件；直接在当前响应输出完整对比分析正文。
 EOF_PROMPT
   } >"$COMPARE_PROMPT"
 }
@@ -431,6 +433,7 @@ EOF_PROMPT
 2. 保留可验证问题，去除已证伪或证据不足项。
 3. 所有问题按严重级别排序并包含证据路径+行号。
 4. 加入“审查边界/待确认项”。
+5. 不要创建、修改或写入任何文件；直接在当前响应输出完整报告正文。
 EOF_PROMPT
   } >"$MERGE_PROMPT"
 }
@@ -456,6 +459,7 @@ EOF_PROMPT
 - 如果你认为当前版本已无问题，或你提出的意见全部可视为不必采纳，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则输出“问题清单（按严重级）”，每条包含修改建议。
+- 不要创建、修改或写入任何文件；直接在当前响应输出上述内容。
 EOF_PROMPT
   } >"$prompt_file"
   echo "$prompt_file"
@@ -482,6 +486,7 @@ EOF_PROMPT
 - 如果你决定“全部不采纳 codex 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则请输出“修订后的完整 Markdown 报告正文”（完整替换版本，不要解释）。
+- 不要创建、修改或写入任何文件；直接在当前响应输出上述内容。
 EOF_PROMPT
   } >"$prompt_file"
   echo "$prompt_file"
