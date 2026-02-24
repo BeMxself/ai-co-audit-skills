@@ -53,8 +53,7 @@ Print the user command guide and ask them to execute it in a terminal:
 `./.ai-workflows/<task-id>/continue`
 Do not run `run` or `continue` inside Claude Code.
 
-Final report export is manual to avoid leaking the output path to agents. After completion, use:
-`automation/implementation-audit/export-final-report.sh --task-dir ".ai-workflows/<task-id>" --output <path>`
+To avoid leaking the output path into task config, `--final-report-path` is embedded into the generated `run`/`continue` scripts as a parameter.
 
 ### Run Task
 

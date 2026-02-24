@@ -367,27 +367,32 @@ jq -n \
     }
   }' >"${TASK_DIR}/config/task.json"
 
-cat >"${TASK_DIR}/run" <<'EOF'
+FINAL_REPORT_ARG=""
+if [[ -n "$FINAL_REPORT_PATH" ]]; then
+  FINAL_REPORT_ARG="--final-report-path \"${FINAL_REPORT_PATH}\""
+fi
+
+cat >"${TASK_DIR}/run" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-TASK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${TASK_DIR}/../.." && pwd)"
+TASK_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="\$(cd "\${TASK_DIR}/../.." && pwd)"
 
-"${REPO_ROOT}/automation/implementation-audit/run-implementation-audit.sh" \
-  --task-dir "${TASK_DIR}" "$@"
+"\${REPO_ROOT}/automation/implementation-audit/run-implementation-audit.sh" \\
+  --task-dir "\${TASK_DIR}" ${FINAL_REPORT_ARG} "\$@"
 EOF
 chmod +x "${TASK_DIR}/run"
 
-cat >"${TASK_DIR}/continue" <<'EOF'
+cat >"${TASK_DIR}/continue" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-TASK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${TASK_DIR}/../.." && pwd)"
+TASK_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="\$(cd "\${TASK_DIR}/../.." && pwd)"
 
-"${REPO_ROOT}/automation/implementation-audit/run-implementation-audit.sh" \
-  --task-dir "${TASK_DIR}" --resume "$@"
+"\${REPO_ROOT}/automation/implementation-audit/run-implementation-audit.sh" \\
+  --task-dir "\${TASK_DIR}" ${FINAL_REPORT_ARG} --resume "\$@"
 EOF
 chmod +x "${TASK_DIR}/continue"
 
@@ -428,14 +433,6 @@ cat >"${TASK_DIR}/README.md" <<EOF
 - Progress checkpoint: \`.ai-workflows/${TASK_ID}/state/progress.json\`
 - State: \`.ai-workflows/${TASK_ID}/state/state.json\`
 - Final report export path (if configured): \`${FINAL_REPORT_PATH_DISPLAY}\`
-
-## Export Final Report (manual)
-
-\`\`\`bash
-automation/implementation-audit/export-final-report.sh \\
-  --task-dir ".ai-workflows/${TASK_ID}" \\
-  --output <path>
-\`\`\`
 EOF
 
 log_info "Task initialized: ${TASK_DIR}"
@@ -446,10 +443,3 @@ Next steps (run in terminal):
   ./.ai-workflows/${TASK_ID}/run
   ./.ai-workflows/${TASK_ID}/continue
 EOF
-
-if [[ -n "$FINAL_REPORT_PATH" ]]; then
-  cat <<EOF
-After completion, export final report:
-  automation/implementation-audit/export-final-report.sh --task-dir ".ai-workflows/${TASK_ID}" --output ${FINAL_REPORT_PATH}
-EOF
-fi

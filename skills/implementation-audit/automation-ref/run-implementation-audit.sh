@@ -16,6 +16,7 @@ DRY_RUN=0
 RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
+FINAL_REPORT_PATH_OVERRIDE=""
 
 usage() {
   cat <<'USAGE'
@@ -26,6 +27,7 @@ Options:
   --task-dir <dir>       Task directory under .ai-workflows (required)
   --config <file>        Task config json path (default: <task-dir>/config/task.json)
   --max-rounds <n>       Override maxRounds from config
+  --final-report-path <p> Override final report export path (relative to working directory)
   --resume               Resume from state/progress.json checkpoint
   --from-phase <phase>   Force resume from a specific phase (use with --resume)
   --from-round <n>       Force round index when phase is round-codex/round-claude
@@ -46,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --max-rounds)
       MAX_ROUNDS_OVERRIDE="$2"
+      shift 2
+      ;;
+    --final-report-path)
+      FINAL_REPORT_PATH_OVERRIDE="$2"
       shift 2
       ;;
     --resume)
@@ -104,6 +110,10 @@ WORKING_DIRECTORY="$(json_optional "$CONFIG_FILE" '.workingDirectory')"
 FINAL_REPORT_PATH="$(json_optional "$CONFIG_FILE" '.finalReportPath')"
 CLAUDE_CMD="$(json_optional "$CONFIG_FILE" '.agents.claude.command')"
 CODEX_CMD="$(json_optional "$CONFIG_FILE" '.agents.codex.command')"
+
+if [[ -n "$FINAL_REPORT_PATH_OVERRIDE" ]]; then
+  FINAL_REPORT_PATH="$FINAL_REPORT_PATH_OVERRIDE"
+fi
 
 
 if [[ "$DRY_RUN" -eq 0 && -z "$CLAUDE_CMD" ]] && is_claude_code_session; then

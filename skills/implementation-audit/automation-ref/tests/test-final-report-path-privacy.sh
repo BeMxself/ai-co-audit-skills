@@ -39,7 +39,17 @@ if [[ -z "$task_dir" ]]; then
   exit 1
 fi
 
-if rg -n "implementation-audit-auto" "${task_dir}" >/dev/null 2>&1; then
-  echo "final report path leaked into task directory"
+if ! rg -n "implementation-audit-auto" "${task_dir}/run" >/dev/null 2>&1; then
+  echo "final report path missing in run script"
+  exit 1
+fi
+
+if ! rg -n "implementation-audit-auto" "${task_dir}/continue" >/dev/null 2>&1; then
+  echo "final report path missing in continue script"
+  exit 1
+fi
+
+if rg -n "implementation-audit-auto" "${task_dir}" -g '!run' -g '!continue' >/dev/null 2>&1; then
+  echo "final report path leaked outside run/continue"
   exit 1
 fi

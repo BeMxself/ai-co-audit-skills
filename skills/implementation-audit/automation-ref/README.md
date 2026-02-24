@@ -32,12 +32,12 @@ bash automation/implementation-audit/init.sh \
   --prompt "重点检查未完成项、设计偏差、重复实现、逻辑冲突，并按严重级排序"
 ```
 
-如果希望流程结束后把最终合并报告额外落到指定位置（相对 `workingDirectory`），请在完成后手动导出：
+如果希望流程结束后把最终合并报告额外落到指定位置（相对 `workingDirectory`），在初始化时传入 `--final-report-path`。该路径会写入任务的 `run/continue` 脚本参数，不会落到任务配置文件中：
 
 ```bash
-automation/implementation-audit/export-final-report.sh \
-  --task-dir .ai-workflows/<task-id> \
-  --output docs/reports/external-auth-final-audit.md
+bash automation/implementation-audit/init.sh \
+  --input docs/plans/2026-02-11-security-external-auth-design.md \
+  --final-report-path docs/reports/external-auth-final-audit.md
 ```
 
 3. 执行任务：
@@ -123,7 +123,7 @@ automation/implementation-audit/export-final-report.sh \
 可选字段：
 - `timeoutSeconds`（默认 `1800`）
 - `workingDirectory`（默认 `.`）
-- `finalReportPath`（相对 `workingDirectory` 的输出路径；为避免泄露给 agent，默认不写入任务配置；请改用 `export-final-report.sh` 手动导出）
+- `finalReportPath`（相对 `workingDirectory` 的输出路径；为避免泄露给 agent，默认不写入任务配置，而是写入 `run/continue` 参数）
 - `successMarker`（默认使用上面的成功标记串）
 - `agents.claude.command`（自定义命令，从 stdin 读取提示词）
 - `agents.codex.command`（自定义命令，从 stdin 读取提示词）
