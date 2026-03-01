@@ -165,4 +165,5 @@ bash automation/implementation-audit/init.sh \
 - 审计过程会生成对话式转录文件：`transcripts/implementation-audit-dialogue.md`，便于人工复核。
 - 如果你希望强制不用 claude 生成元信息，可在初始化时加 `--no-claude-meta`。
 - 运行日志会显示当前阶段与迭代轮次，便于跟踪进度。
+- compare/merge/迭代阶段的 prompts 默认只提供文件相对路径，不再内联整段文件内容，以便 agent 按需读取并利用其内部读取优化。
 - `sync-automation.sh` 会在 reference 指向 `~/.claude/plugins/cache` 时自动解析到非缓存源目录（优先 `AI_CO_AUDIT_SKILLS_SOURCE_DIR`，其次常见本地仓库路径）；若找不到有效源会报错并提示设置 `AI_CO_AUDIT_SKILLS_SOURCE_DIR`。

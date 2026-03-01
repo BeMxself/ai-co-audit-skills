@@ -18,7 +18,7 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
-PLUGIN_VERSION="1.1.8"
+PLUGIN_VERSION="1.1.9"
 
 confirm_run_start() {
   local answer=""
@@ -223,7 +223,6 @@ CLAUDE_COMPARE_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-
 CODEX_COMPARE_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-codex.md"
 MERGED_REPORT="${REPORTS_MERGED_DIR}/${REPORT_BASE_NAME}.md"
 FINAL_REPORT_OUTPUT_ABS=""
-PROMPT_INLINE_WARN_BYTES=200000
 
 run_initial_phase() {
   local need_claude=1
@@ -343,22 +342,32 @@ build_input_list() {
   echo "$out"
 }
 
-render_file_block() {
+to_workdir_relative_path() {
+  local target_path="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$WORKDIR" "$target_path" <<'PY'
+import os
+import sys
+base = os.path.abspath(sys.argv[1])
+target = os.path.abspath(sys.argv[2])
+print(os.path.relpath(target, base))
+PY
+  else
+    printf "%s\n" "$target_path"
+  fi
+}
+
+render_file_reference_block() {
   local title="$1"
   local file="$2"
-  local file_bytes=0
+  local rel_file=""
 
   [[ -f "$file" ]] || fail "required artifact missing for prompt assembly: $file (this phase depends on outputs from earlier phases; if resuming with --from-phase, ensure prerequisite outputs exist)"
-  file_bytes="$(wc -c <"$file" | tr -d '[:space:]')"
-  if [[ "$file_bytes" -gt "$PROMPT_INLINE_WARN_BYTES" ]]; then
-    log_warn "large inline prompt source detected (${file_bytes} bytes): $file (section=${title}); agent context truncation risk may increase"
-  fi
+  rel_file="$(to_workdir_relative_path "$file")"
 
   cat <<EOF_BLOCK
-【${title} 文件路径】
-${file}
-【${title} 内容】
-$(cat "$file")
+【${title} 文件路径（相对工作目录）】
+${rel_file}
 EOF_BLOCK
 }
 
@@ -389,12 +398,14 @@ build_compare_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_block "报告A" "$CLAUDE_INITIAL_REPORT"
+    render_file_reference_block "报告A" "$CLAUDE_INITIAL_REPORT"
 
     echo ""
-    render_file_block "报告B" "$CODEX_INITIAL_REPORT"
+    render_file_reference_block "报告B" "$CODEX_INITIAL_REPORT"
 
     cat <<EOF_PROMPT
+
+请自行读取上述文件并完成对比分析。
 
 【输出要求】
 1. 输出 Markdown 对比分析。
@@ -413,18 +424,20 @@ build_merge_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_block "初始报告-claude" "$CLAUDE_INITIAL_REPORT"
+    render_file_reference_block "初始报告-claude" "$CLAUDE_INITIAL_REPORT"
 
     echo ""
-    render_file_block "初始报告-codex" "$CODEX_INITIAL_REPORT"
+    render_file_reference_block "初始报告-codex" "$CODEX_INITIAL_REPORT"
 
     echo ""
-    render_file_block "对比分析-claude" "$CLAUDE_COMPARE_REPORT"
+    render_file_reference_block "对比分析-claude" "$CLAUDE_COMPARE_REPORT"
 
     echo ""
-    render_file_block "对比分析-codex" "$CODEX_COMPARE_REPORT"
+    render_file_reference_block "对比分析-codex" "$CODEX_COMPARE_REPORT"
 
     cat <<EOF_PROMPT
+
+请自行读取上述文件并完成报告合并。
 
 【输出要求】
 1. 输出完整 Markdown 报告正文（不要额外解释）。
@@ -445,9 +458,11 @@ build_codex_round_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_block "合并版审查报告" "$MERGED_REPORT"
+    render_file_reference_block "合并版审查报告" "$MERGED_REPORT"
 
     cat <<EOF_PROMPT
+
+请先自行读取上述报告文件。
 
 重点检查：
 1. 是否还有事实错误、误报、证据不足、矛盾表述。
@@ -473,12 +488,14 @@ build_claude_round_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_block "当前合并版" "$MERGED_REPORT"
+    render_file_reference_block "当前合并版" "$MERGED_REPORT"
 
     echo ""
-    render_file_block "codex 评审意见" "$codex_feedback_file"
+    render_file_reference_block "codex 评审意见" "$codex_feedback_file"
 
     cat <<EOF_PROMPT
+
+请先自行读取上述文件，再决定是否采纳本轮意见并完成修订。
 
 【严格输出规则】
 - 如果你决定“全部不采纳 codex 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
