@@ -2,7 +2,7 @@
 
 [中文](README.md) | [English](README.en.md)
 
-一组以 Claude Code 插件为主的“实现审计”skills 与自动化脚本，用于 Claude + Codex 协作审计并输出最终报告。
+一组“实现审计”skills 与自动化脚本，提供 **Claude Code 版** 与 **Kiro CLI 版** 两套分离工作流，用于 AI 协作审计并输出最终报告。
 
 ## 安装
 
@@ -35,6 +35,7 @@ Codex 会从以下位置扫描 skills：
 ```text
 $skill-installer 请从 GitHub 仓库 BeMxself/ai-co-audit-skills 安装以下 skills：
 - skills/implementation-audit
+- skills/implementation-audit-kiro
 ```
 
 安装完成后，重启 Codex 以加载新 skills。
@@ -57,34 +58,30 @@ rsync -a /path/to/ai-co-audit-skills/skills/ .agents/skills/
 
 后续更新同样重复执行对应的 `rsync` 命令即可。
 
-### Kiro CLI (Skills)（可选）
+### Kiro CLI (Skills)（独立安装）
 
-Kiro CLI 可以从 `.kiro/skills/**/SKILL.md`（workspace 级别）加载 skills，并通过 agent profile 使用。
+Kiro CLI 版请安装独立 skill：`implementation-audit-kiro`。不要与 Claude Code 插件路径混用。
 
-1) 将 skills 安装到当前仓库/workspace：
+1) 安装 Kiro skill 到目标项目：
 
 ```bash
 mkdir -p .kiro/skills
-rsync -a skills/ .kiro/skills/
+rsync -a /path/to/ai-co-audit-skills/skills/implementation-audit-kiro .kiro/skills/
 ```
 
-2) 创建一个包含 skills resources 的 agent（此命令会打开编辑器）：
+2) 在目标项目生成 agent（模型可按需修改）：
 
 ```bash
-mkdir -p .kiro/agents
-kiro-cli agent create --name "AI Co-Audit Agent" --directory .kiro/agents
+bash .kiro/skills/implementation-audit-kiro/automation-ref/setup-kiro-agent.sh \
+  --project-root "$(pwd)" \
+  --agent-name ai-co-audit-kiro-opus \
+  --model claude-opus-4.6
 ```
 
-3) 在 `.kiro/agents/ai_co_audit_agent.json` 中加入 resources 配置（示例）：
-
-```json
-{ "resources": ["skill://.kiro/skills/**/SKILL.md"] }
-```
-
-4) 用该 agent 启动对话：
+3) 用该 agent 启动 Kiro：
 
 ```bash
-kiro-cli chat --agent "AI Co-Audit Agent"
+kiro-cli chat --agent ai-co-audit-kiro-opus
 ```
 
 ## 包含的 Skills
@@ -92,6 +89,9 @@ kiro-cli chat --agent "AI Co-Audit Agent"
 - `skills/implementation-audit/`
   - `SKILL.md`: skill 指令
   - `automation-ref/`: 自动化脚本的源参考
+- `skills/implementation-audit-kiro/`
+  - `SKILL.md`: Kiro CLI 专用 skill 指令
+  - `automation-ref/`: Kiro CLI 版自动化脚本源参考
 
 ## implementation-audit 概览
 
@@ -103,6 +103,18 @@ kiro-cli chat --agent "AI Co-Audit Agent"
 - 手工恢复：`--from-phase` / `--from-round`
 
 更完整说明见 `skills/implementation-audit/automation-ref/README.md`。
+
+## implementation-audit-kiro 概览
+
+该 skill 会把自动化脚本同步到 `automation/implementation-audit-kiro/`，并支持：
+
+- 在目标项目生成 Kiro agent：`setup-kiro-agent.sh`
+- 任务初始化：`init.sh`
+- 执行：`.ai-workflows/<task-id>/run`
+- 断点续跑：`.ai-workflows/<task-id>/continue`
+- 手工恢复：`--from-phase` / `--from-round`
+
+更完整说明见 `skills/implementation-audit-kiro/automation-ref/README.md`。
 
 ## 快速开始
 

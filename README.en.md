@@ -2,7 +2,7 @@
 
 [English](README.en.md) | [中文](README.md)
 
-Primarily a Claude Code plugin with implementation-audit skills and automation assets for a Claude + Codex co-audit workflow.
+Implementation-audit skills and automation assets with two separated workflows: **Claude Code** and **Kiro CLI**.
 
 ## Installation
 
@@ -35,6 +35,7 @@ Option A (Recommended): install via `$skill-installer` inside Codex
 ```text
 $skill-installer Please install these skills from GitHub repo BeMxself/ai-co-audit-skills:
 - skills/implementation-audit
+- skills/implementation-audit-kiro
 ```
 
 Restart Codex to load the new skills.
@@ -57,34 +58,30 @@ rsync -a /path/to/ai-co-audit-skills/skills/ .agents/skills/
 
 To update later, re-run the corresponding `rsync` command.
 
-### Kiro CLI (Skills) (Optional)
+### Kiro CLI (Skills) (Separated Path)
 
-Kiro CLI can load skills from `.kiro/skills/**/SKILL.md` (workspace-level) and use them via an agent profile.
+For Kiro CLI, install the dedicated skill `implementation-audit-kiro`. Do not mix it with the Claude Code plugin path.
 
-1) Install skills into the current repo/workspace:
+1) Install the Kiro skill into your target project:
 
 ```bash
 mkdir -p .kiro/skills
-rsync -a skills/ .kiro/skills/
+rsync -a /path/to/ai-co-audit-skills/skills/implementation-audit-kiro .kiro/skills/
 ```
 
-2) Create an agent that includes the skill resources (this opens an editor):
+2) Generate an agent in the target project (model can be changed as needed):
 
 ```bash
-mkdir -p .kiro/agents
-kiro-cli agent create --name "AI Co-Audit Agent" --directory .kiro/agents
+bash .kiro/skills/implementation-audit-kiro/automation-ref/setup-kiro-agent.sh \
+  --project-root "$(pwd)" \
+  --agent-name ai-co-audit-kiro-opus \
+  --model claude-opus-4.6
 ```
 
-3) In `.kiro/agents/ai_co_audit_agent.json`, add this resource entry:
-
-```json
-{ "resources": ["skill://.kiro/skills/**/SKILL.md"] }
-```
-
-4) Start a chat with that agent:
+3) Start Kiro with that agent:
 
 ```bash
-kiro-cli chat --agent "AI Co-Audit Agent"
+kiro-cli chat --agent ai-co-audit-kiro-opus
 ```
 
 ## Included Skills
@@ -92,6 +89,9 @@ kiro-cli chat --agent "AI Co-Audit Agent"
 - `skills/implementation-audit/`
   - `SKILL.md`: skill instructions
   - `automation-ref/`: source-of-truth automation scripts
+- `skills/implementation-audit-kiro/`
+  - `SKILL.md`: Kiro CLI specific skill instructions
+  - `automation-ref/`: source-of-truth Kiro automation scripts
 
 ## Implementation-Audit Overview
 
@@ -103,6 +103,18 @@ This skill syncs automation scripts into `automation/implementation-audit/`, and
 - manual resume: `--from-phase` / `--from-round`
 
 See `skills/implementation-audit/automation-ref/README.md` for full workflow details.
+
+## implementation-audit-kiro Overview
+
+This skill syncs automation scripts into `automation/implementation-audit-kiro/`, and supports:
+
+- generating a Kiro agent in the target project: `setup-kiro-agent.sh`
+- task initialization: `init.sh`
+- execution: `.ai-workflows/<task-id>/run`
+- checkpoint resume: `.ai-workflows/<task-id>/continue`
+- manual resume: `--from-phase` / `--from-round`
+
+See `skills/implementation-audit-kiro/automation-ref/README.md` for full workflow details.
 
 ## Quick Start
 
