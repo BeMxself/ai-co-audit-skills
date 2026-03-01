@@ -18,7 +18,43 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
-PLUGIN_VERSION="1.1.9"
+PLUGIN_VERSION="1.1.10"
+RUNNING_BG_PIDS=()
+
+register_running_bg_pids() {
+  RUNNING_BG_PIDS=("$@")
+}
+
+clear_running_bg_pids() {
+  RUNNING_BG_PIDS=()
+}
+
+force_stop_running_bg_pids() {
+  local pid=""
+
+  if [[ "${#RUNNING_BG_PIDS[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  for pid in "${RUNNING_BG_PIDS[@]}"; do
+    # Prefer killing the background job's process group when available.
+    kill -TERM -- "-${pid}" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  sleep 0.2
+  for pid in "${RUNNING_BG_PIDS[@]}"; do
+    kill -KILL -- "-${pid}" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+}
+
+handle_interrupt() {
+  log_warn "Interrupt received. Stopping running processes..."
+  force_stop_running_bg_pids
+  exit 130
+}
+
+trap 'handle_interrupt' INT TERM
 
 confirm_run_start() {
   local answer=""
@@ -251,6 +287,7 @@ run_initial_phase() {
     log_info "Phase start: initial (claude+codex)"
 
     rm -f "$claude_rc_file" "$codex_rc_file"
+    set -m
     (
       run_agent "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
         "${LOGS_DIR}/01-initial-claude.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$CLAUDE_CMD"
@@ -264,9 +301,12 @@ run_initial_phase() {
       echo $? >"$codex_rc_file"
     ) &
     codex_pid=$!
+    set +m
 
+    register_running_bg_pids "$claude_pid" "$codex_pid"
     wait "$claude_pid" || true
     wait "$codex_pid" || true
+    clear_running_bg_pids
 
     ran_claude=1
     ran_codex=1

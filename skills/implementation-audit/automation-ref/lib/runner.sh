@@ -37,7 +37,7 @@ run_agent() {
   if [[ -n "$custom_cmd" ]]; then
     (
       cd "$workdir"
-      timeout "${timeout_seconds}s" bash -lc "$custom_cmd" \
+      timeout --foreground "${timeout_seconds}s" bash -lc "$custom_cmd" \
         <"$prompt_file" >"$output_file" 2>"$log_file"
     )
     rc=$?
@@ -51,11 +51,11 @@ run_agent() {
         (
           cd "$workdir"
           if [[ "$claude_debug_mode" == "1" || "$claude_debug_mode" == "true" || "$claude_debug_mode" == "TRUE" || "$claude_debug_mode" == "yes" || "$claude_debug_mode" == "YES" ]]; then
-            timeout "${timeout_seconds}s" \
+            timeout --foreground "${timeout_seconds}s" \
               claude -p --dangerously-skip-permissions --debug-file "$claude_debug_file" - \
               <"$claude_prompt_file" >>"$log_file" 2>>"$log_file"
           else
-            timeout "${timeout_seconds}s" \
+            timeout --foreground "${timeout_seconds}s" \
               claude -p --dangerously-skip-permissions - \
               <"$claude_prompt_file" >>"$log_file" 2>>"$log_file"
           fi
@@ -66,7 +66,7 @@ run_agent() {
       codex)
         (
           cd "$workdir"
-          timeout "${timeout_seconds}s" \
+          timeout --foreground "${timeout_seconds}s" \
             codex exec - \
               --dangerously-bypass-approvals-and-sandbox \
               --skip-git-repo-check \

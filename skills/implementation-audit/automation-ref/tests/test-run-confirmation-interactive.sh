@@ -50,7 +50,7 @@ if [[ "$rc" -eq 0 ]]; then
   exit 1
 fi
 
-if ! grep -q "Plugin version: 1.1.9" "$output_file"; then
+if ! grep -q "Plugin version: 1.1.10" "$output_file"; then
   echo "expected plugin version output"
   cat "$output_file"
   exit 1
