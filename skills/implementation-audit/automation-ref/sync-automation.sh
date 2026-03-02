@@ -21,6 +21,7 @@ FILES=(
   "init.sh"
   "init-implementation-audit-task.sh"
   "run-implementation-audit.sh"
+  "setup-kiro-agent.sh"
   "lib/common.sh"
   "lib/runner.sh"
 )

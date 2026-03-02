@@ -82,30 +82,6 @@ is_claude_code_session() {
   return 1
 }
 
-append_dialogue_entry() {
-  local transcript_file="$1"
-  local step_name="$2"
-  local speaker="$3"
-  local prompt_file="$4"
-  local output_file="$5"
-
-  {
-    echo ""
-    echo "## $(log_ts) | ${step_name} | ${speaker}"
-    echo ""
-    echo "### Prompt (${prompt_file})"
-    echo '```text'
-    cat "$prompt_file"
-    echo '```'
-    echo ""
-    echo "### Output (${output_file})"
-    echo '```markdown'
-    cat "$output_file"
-    echo '```'
-    echo ""
-  } >>"$transcript_file"
-}
-
 write_state_json() {
   local state_file="$1"
   local task_name="$2"

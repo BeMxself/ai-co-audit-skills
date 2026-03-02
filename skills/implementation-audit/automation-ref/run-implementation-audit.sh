@@ -18,8 +18,16 @@ RESUME=0
 RESUME_FROM_PHASE=""
 RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
-PLUGIN_VERSION="1.1.10"
+REVIEWER_RUNNER_OVERRIDE=""
+REVISER_RUNNER_OVERRIDE=""
+PLUGIN_VERSION="1.2.0"
 RUNNING_BG_PIDS=()
+
+REVIEWER_RUNNER=""
+REVISER_RUNNER=""
+REVIEWER_CMD=""
+REVISER_CMD=""
+KIRO_AGENT_NAME=""
 
 register_running_bg_pids() {
   RUNNING_BG_PIDS=("$@")
@@ -37,7 +45,6 @@ force_stop_running_bg_pids() {
   fi
 
   for pid in "${RUNNING_BG_PIDS[@]}"; do
-    # Prefer killing the background job's process group when available.
     kill -TERM -- "-${pid}" 2>/dev/null || true
     kill -TERM "$pid" 2>/dev/null || true
   done
@@ -86,17 +93,97 @@ Usage:
   automation/implementation-audit/run-implementation-audit.sh --task-dir <task-dir> [options]
 
 Options:
-  --task-dir <dir>       Task directory under .ai-workflows (required)
-  --config <file>        Task config json path (default: <task-dir>/config/task.json)
-  --max-rounds <n>       Override maxRounds from config
-  --timeout-seconds <n>  Override timeoutSeconds from config
-  --final-report-path <p> Override final report export path (relative to working directory)
-  --resume               Resume from state/progress.json checkpoint
-  --from-phase <phase>   Force resume from a specific phase (use with --resume)
-  --from-round <n>       Force round index when phase is round-codex/round-claude
-  --dry-run              Generate prompts/artifacts without invoking claude/codex
-  -h, --help             Show help
+  --task-dir <dir>         Task directory under .ai-workflows (required)
+  --config <file>          Task config json path (default: <task-dir>/config/task.json)
+  --reviewer <runner>      Override reviewer runner (default from config or codex)
+  --reviser <runner>       Override reviser runner (default from config or claude)
+  --max-rounds <n>         Override maxRounds from config
+  --timeout-seconds <n>    Override timeoutSeconds from config
+  --final-report-path <p>  Override final report export path (relative to working directory)
+  --resume                 Resume from state/progress.json checkpoint
+  --from-phase <phase>     Force resume from a specific phase (use with --resume)
+  --from-round <n>         Force round index when phase is round-reviewer/round-reviser
+  --dry-run                Generate prompts/artifacts without invoking agents
+  -h, --help               Show help
 USAGE
+}
+
+validate_runner_name() {
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid runner name: $name"
+}
+
+runner_command_from_config() {
+  local runner="$1"
+  jq -er --arg runner "$runner" '.runners[$runner].command // empty' "$CONFIG_FILE" 2>/dev/null || true
+}
+
+runner_kiro_agent_from_config() {
+  jq -er '.runners.kiro.agent // empty' "$CONFIG_FILE" 2>/dev/null || true
+}
+
+validate_kiro_agent_file_tools() {
+  local workdir="$1"
+  local agent_name="$2"
+  local agent_file="${workdir}/.kiro/agents/${agent_name}.json"
+  local has_read=0
+  local has_write=0
+  local tool=""
+
+  [[ -f "$agent_file" ]] || fail "Kiro agent config not found: ${agent_file}. Run automation/implementation-audit/setup-kiro-agent.sh --project-root \"${workdir}\" --agent-name \"${agent_name}\" --force"
+
+  if jq -er '.tools // [] | index("*") != null' "$agent_file" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  for tool in fs_read read_file file_read; do
+    if jq -er --arg t "$tool" '.tools // [] | index($t) != null' "$agent_file" >/dev/null 2>&1; then
+      has_read=1
+      break
+    fi
+  done
+
+  for tool in fs_write write_file file_write; do
+    if jq -er --arg t "$tool" '.tools // [] | index($t) != null' "$agent_file" >/dev/null 2>&1; then
+      has_write=1
+      break
+    fi
+  done
+
+  if [[ "$has_read" -eq 1 && "$has_write" -eq 1 ]]; then
+    return 0
+  fi
+
+  fail "Kiro agent lacks file read/write tools: ${agent_file}. Regenerate with: automation/implementation-audit/setup-kiro-agent.sh --project-root \"${workdir}\" --agent-name \"${agent_name}\" --force"
+}
+
+ensure_runner_ready() {
+  local runner="$1"
+  local command="$2"
+
+  if [[ -n "$command" ]]; then
+    return 0
+  fi
+
+  case "$runner" in
+    claude)
+      if is_claude_code_session; then
+        fail "Claude Code session detected. Runner 'claude' invokes the claude CLI, which cannot run inside Claude Code. Run from an external terminal, or use --dry-run."
+      fi
+      require_commands claude
+      ;;
+    codex)
+      require_commands codex
+      ;;
+    kiro)
+      require_commands kiro-cli
+      [[ -n "$KIRO_AGENT_NAME" ]] || KIRO_AGENT_NAME="${IMPLEMENTATION_AUDIT_KIRO_AGENT:-ai-co-audit-kiro-opus}"
+      validate_kiro_agent_file_tools "$WORKDIR" "$KIRO_AGENT_NAME"
+      ;;
+    *)
+      fail "unknown built-in runner '${runner}'. Configure runners.${runner}.command in task config or choose claude/codex/kiro"
+      ;;
+  esac
 }
 
 while [[ $# -gt 0 ]]; do
@@ -107,6 +194,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --config)
       CONFIG_FILE="$2"
+      shift 2
+      ;;
+    --reviewer)
+      REVIEWER_RUNNER_OVERRIDE="$2"
+      shift 2
+      ;;
+    --reviser)
+      REVISER_RUNNER_OVERRIDE="$2"
       shift 2
       ;;
     --max-rounds)
@@ -175,8 +270,20 @@ SUCCESS_MARKER="$(json_optional "$CONFIG_FILE" '.successMarker')"
 TIMEOUT_SECONDS="$(json_optional "$CONFIG_FILE" '.timeoutSeconds')"
 WORKING_DIRECTORY="$(json_optional "$CONFIG_FILE" '.workingDirectory')"
 FINAL_REPORT_PATH="$(json_optional "$CONFIG_FILE" '.finalReportPath')"
-CLAUDE_CMD="$(json_optional "$CONFIG_FILE" '.agents.claude.command')"
-CODEX_CMD="$(json_optional "$CONFIG_FILE" '.agents.codex.command')"
+REVIEWER_RUNNER_CFG="$(json_optional "$CONFIG_FILE" '.execution.reviewer')"
+REVISER_RUNNER_CFG="$(json_optional "$CONFIG_FILE" '.execution.reviser')"
+
+REVIEWER_RUNNER="${REVIEWER_RUNNER_OVERRIDE:-${REVIEWER_RUNNER_CFG:-codex}}"
+REVISER_RUNNER="${REVISER_RUNNER_OVERRIDE:-${REVISER_RUNNER_CFG:-claude}}"
+
+validate_runner_name "$REVIEWER_RUNNER"
+validate_runner_name "$REVISER_RUNNER"
+[[ "$REVIEWER_RUNNER" != "$REVISER_RUNNER" ]] || fail "reviewer and reviser must be different runners"
+
+REVIEWER_CMD="$(runner_command_from_config "$REVIEWER_RUNNER")"
+REVISER_CMD="$(runner_command_from_config "$REVISER_RUNNER")"
+KIRO_AGENT_NAME="$(runner_kiro_agent_from_config)"
+[[ -n "$KIRO_AGENT_NAME" ]] || KIRO_AGENT_NAME="${IMPLEMENTATION_AUDIT_KIRO_AGENT:-ai-co-audit-kiro-opus}"
 
 if [[ -n "$FINAL_REPORT_PATH_OVERRIDE" ]]; then
   FINAL_REPORT_PATH="$FINAL_REPORT_PATH_OVERRIDE"
@@ -184,20 +291,6 @@ fi
 
 if [[ -n "$TIMEOUT_SECONDS_OVERRIDE" ]]; then
   TIMEOUT_SECONDS="$TIMEOUT_SECONDS_OVERRIDE"
-fi
-
-
-if [[ "$DRY_RUN" -eq 0 && -z "$CLAUDE_CMD" ]] && is_claude_code_session; then
-  fail "Claude Code session detected. This workflow invokes the claude CLI, which cannot run inside Claude Code. Run it from an external terminal, or use --dry-run to generate prompts only."
-fi
-
-if [[ "$DRY_RUN" -eq 0 ]]; then
-  if [[ -z "$CLAUDE_CMD" ]]; then
-    require_commands claude
-  fi
-  if [[ -z "$CODEX_CMD" ]]; then
-    require_commands codex
-  fi
 fi
 
 [[ -n "$SUCCESS_MARKER" ]] || SUCCESS_MARKER="当前版本已无问题，可以作为正式版本使用"
@@ -217,6 +310,14 @@ else
 fi
 [[ -d "$WORKDIR" ]] || fail "working directory not found: $WORKDIR"
 
+if [[ "$DRY_RUN" -eq 0 ]]; then
+  if [[ "$REVIEWER_RUNNER" == "kiro" || "$REVISER_RUNNER" == "kiro" ]]; then
+    export IMPLEMENTATION_AUDIT_KIRO_AGENT="$KIRO_AGENT_NAME"
+  fi
+  ensure_runner_ready "$REVIEWER_RUNNER" "$REVIEWER_CMD"
+  ensure_runner_ready "$REVISER_RUNNER" "$REVISER_CMD"
+fi
+
 INPUTS_FILE="${TASK_DIR}/inputs/targets.txt"
 INPUT_FILES=()
 while IFS= read -r input_file; do
@@ -233,8 +334,6 @@ REPORTS_MERGED_DIR="${TASK_DIR}/reports/merged"
 REPORTS_ROUNDS_DIR="${TASK_DIR}/reports/rounds"
 LOGS_DIR="${TASK_DIR}/logs"
 STATE_DIR="${TASK_DIR}/state"
-TRANSCRIPTS_DIR="${TASK_DIR}/transcripts"
-TRANSCRIPT_FILE="${TRANSCRIPTS_DIR}/implementation-audit-dialogue.md"
 STATE_FILE="${STATE_DIR}/state.json"
 PROGRESS_FILE="${STATE_DIR}/progress.json"
 
@@ -245,7 +344,6 @@ ensure_dir "${REPORTS_MERGED_DIR}"
 ensure_dir "${REPORTS_ROUNDS_DIR}"
 ensure_dir "${LOGS_DIR}"
 ensure_dir "${STATE_DIR}"
-ensure_dir "${TRANSCRIPTS_DIR}"
 
 printf "%s\n" "${INPUT_FILES[@]}" >"${INPUTS_FILE}"
 
@@ -253,123 +351,108 @@ INITIAL_PROMPT="${PROMPTS_DIR}/01-initial-review.prompt.txt"
 COMPARE_PROMPT="${PROMPTS_DIR}/02-compare.prompt.txt"
 MERGE_PROMPT="${PROMPTS_DIR}/03-merge.prompt.txt"
 
-CLAUDE_INITIAL_REPORT="${REPORTS_INITIAL_DIR}/${REPORT_BASE_NAME}-claude.md"
-CODEX_INITIAL_REPORT="${REPORTS_INITIAL_DIR}/${REPORT_BASE_NAME}-codex.md"
-CLAUDE_COMPARE_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-claude.md"
-CODEX_COMPARE_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-codex.md"
+INITIAL_REVISER_REPORT="${REPORTS_INITIAL_DIR}/${REPORT_BASE_NAME}-${REVISER_RUNNER}.md"
+INITIAL_REVIEWER_REPORT="${REPORTS_INITIAL_DIR}/${REPORT_BASE_NAME}-${REVIEWER_RUNNER}.md"
+COMPARE_REVISER_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-${REVISER_RUNNER}.md"
+COMPARE_REVIEWER_REPORT="${REPORTS_COMPARISON_DIR}/${REPORT_BASE_NAME}-compare-by-${REVIEWER_RUNNER}.md"
 MERGED_REPORT="${REPORTS_MERGED_DIR}/${REPORT_BASE_NAME}.md"
 FINAL_REPORT_OUTPUT_ABS=""
 
 run_initial_phase() {
-  local need_claude=1
-  local need_codex=1
-  local ran_claude=0
-  local ran_codex=0
-  local claude_rc_file="${LOGS_DIR}/.rc-initial-claude"
-  local codex_rc_file="${LOGS_DIR}/.rc-initial-codex"
+  local need_reviser=1
+  local need_reviewer=1
+  local reviser_rc_file="${LOGS_DIR}/.rc-initial-${REVISER_RUNNER}"
+  local reviewer_rc_file="${LOGS_DIR}/.rc-initial-${REVIEWER_RUNNER}"
   local rc=0
   local final_status=""
 
-  if [[ -s "$CLAUDE_INITIAL_REPORT" ]]; then
-    need_claude=0
+  if [[ -s "$INITIAL_REVISER_REPORT" ]]; then
+    need_reviser=0
   fi
-  if [[ -s "$CODEX_INITIAL_REPORT" ]]; then
-    need_codex=0
+  if [[ -s "$INITIAL_REVIEWER_REPORT" ]]; then
+    need_reviewer=0
   fi
 
-  if [[ "$need_claude" -eq 0 && "$need_codex" -eq 0 ]]; then
+  if [[ "$need_reviser" -eq 0 && "$need_reviewer" -eq 0 ]]; then
     log_info "Phase start: initial (skip, reports already exist)"
     log_info "Phase done: initial (skip, reports already exist)"
     return 0
   fi
 
-  if [[ "$need_claude" -eq 1 && "$need_codex" -eq 1 ]]; then
-    log_info "Phase start: initial (claude+codex)"
+  if [[ "$need_reviser" -eq 1 && "$need_reviewer" -eq 1 ]]; then
+    log_info "Phase start: initial (${REVISER_RUNNER}+${REVIEWER_RUNNER})"
 
-    rm -f "$claude_rc_file" "$codex_rc_file"
+    rm -f "$reviser_rc_file" "$reviewer_rc_file"
     set -m
     (
-      run_agent "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
-        "${LOGS_DIR}/01-initial-claude.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$CLAUDE_CMD"
-      echo $? >"$claude_rc_file"
+      run_agent "$REVISER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVISER_REPORT" \
+        "${LOGS_DIR}/01-initial-${REVISER_RUNNER}.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$REVISER_CMD"
+      echo $? >"$reviser_rc_file"
     ) &
-    claude_pid=$!
+    reviser_pid=$!
 
     (
-      run_agent "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT" \
-        "${LOGS_DIR}/01-initial-codex.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$CODEX_CMD"
-      echo $? >"$codex_rc_file"
+      run_agent "$REVIEWER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVIEWER_REPORT" \
+        "${LOGS_DIR}/01-initial-${REVIEWER_RUNNER}.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$REVIEWER_CMD"
+      echo $? >"$reviewer_rc_file"
     ) &
-    codex_pid=$!
+    reviewer_pid=$!
     set +m
 
-    register_running_bg_pids "$claude_pid" "$codex_pid"
-    wait "$claude_pid" || true
-    wait "$codex_pid" || true
+    register_running_bg_pids "$reviser_pid" "$reviewer_pid"
+    wait "$reviser_pid" || true
+    wait "$reviewer_pid" || true
     clear_running_bg_pids
 
-    ran_claude=1
-    ran_codex=1
-
     rc=0
-    if [[ -f "$claude_rc_file" ]]; then
-      rc="$(cat "$claude_rc_file" || echo 1)"
+    if [[ -f "$reviser_rc_file" ]]; then
+      rc="$(cat "$reviser_rc_file" || echo 1)"
     else
       rc=1
     fi
     if [[ "$rc" -ne 0 ]]; then
       if [[ "$rc" -eq 124 ]]; then
-        final_status="failed-timeout-initial-claude"
+        final_status="failed-timeout-initial-${REVISER_RUNNER}"
       else
-        final_status="failed-initial-claude-exit-${rc}"
+        final_status="failed-initial-${REVISER_RUNNER}-exit-${rc}"
       fi
-      write_progress_json "failed" "initial-claude" "$NEXT_ROUND" "$final_status" "initial-claude"
-      fail "agent failed at step initial-claude (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
+      write_progress_json "failed" "initial-reviser" "$NEXT_ROUND" "$final_status" "initial-${REVISER_RUNNER}"
+      fail "agent failed at step initial-${REVISER_RUNNER} (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
     fi
 
     rc=0
-    if [[ -f "$codex_rc_file" ]]; then
-      rc="$(cat "$codex_rc_file" || echo 1)"
+    if [[ -f "$reviewer_rc_file" ]]; then
+      rc="$(cat "$reviewer_rc_file" || echo 1)"
     else
       rc=1
     fi
     if [[ "$rc" -ne 0 ]]; then
       if [[ "$rc" -eq 124 ]]; then
-        final_status="failed-timeout-initial-codex"
+        final_status="failed-timeout-initial-${REVIEWER_RUNNER}"
       else
-        final_status="failed-initial-codex-exit-${rc}"
+        final_status="failed-initial-${REVIEWER_RUNNER}-exit-${rc}"
       fi
-      write_progress_json "failed" "initial-codex" "$NEXT_ROUND" "$final_status" "initial-codex"
-      fail "agent failed at step initial-codex (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
+      write_progress_json "failed" "initial-reviewer" "$NEXT_ROUND" "$final_status" "initial-${REVIEWER_RUNNER}"
+      fail "agent failed at step initial-${REVIEWER_RUNNER} (exit=${rc}), checkpoint saved to ${PROGRESS_FILE}"
     fi
 
-    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
-    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
-    log_info "Phase done: initial (claude+codex)"
+    log_info "Phase done: initial (${REVISER_RUNNER}+${REVIEWER_RUNNER})"
     return 0
   fi
 
-  if [[ "$need_claude" -eq 1 ]]; then
-    log_info "Phase start: initial (claude)"
-    run_agent_checked "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT" \
-      "${LOGS_DIR}/01-initial-claude.log" "initial-claude" "$CLAUDE_CMD"
-    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
-    log_info "Phase done: initial (claude)"
-    ran_claude=1
+  if [[ "$need_reviser" -eq 1 ]]; then
+    log_info "Phase start: initial (${REVISER_RUNNER})"
+    run_agent_checked "$REVISER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVISER_REPORT" \
+      "${LOGS_DIR}/01-initial-${REVISER_RUNNER}.log" "initial-${REVISER_RUNNER}" "$REVISER_CMD"
+    log_info "Phase done: initial (${REVISER_RUNNER})"
   fi
 
-  if [[ "$need_codex" -eq 1 ]]; then
-    log_info "Phase start: initial (codex)"
-    NEXT_PHASE="initial-codex"
-    run_agent_checked "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT" \
-      "${LOGS_DIR}/01-initial-codex.log" "initial-codex" "$CODEX_CMD"
-    append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
-    log_info "Phase done: initial (codex)"
-    ran_codex=1
-  fi
-
-  if [[ "$ran_claude" -eq 1 && "$ran_codex" -eq 1 ]]; then
-    return 0
+  if [[ "$need_reviewer" -eq 1 ]]; then
+    log_info "Phase start: initial (${REVIEWER_RUNNER})"
+    NEXT_PHASE="initial-reviewer"
+    run_agent_checked "$REVIEWER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVIEWER_REPORT" \
+      "${LOGS_DIR}/01-initial-${REVIEWER_RUNNER}.log" "initial-${REVIEWER_RUNNER}" "$REVIEWER_CMD"
+    log_info "Phase done: initial (${REVIEWER_RUNNER})"
   fi
 }
 
@@ -438,10 +521,10 @@ build_compare_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_reference_block "报告A" "$CLAUDE_INITIAL_REPORT"
+    render_file_reference_block "报告A" "$INITIAL_REVISER_REPORT"
 
     echo ""
-    render_file_reference_block "报告B" "$CODEX_INITIAL_REPORT"
+    render_file_reference_block "报告B" "$INITIAL_REVIEWER_REPORT"
 
     cat <<EOF_PROMPT
 
@@ -464,16 +547,16 @@ build_merge_prompt() {
 EOF_PROMPT
 
     echo ""
-    render_file_reference_block "初始报告-claude" "$CLAUDE_INITIAL_REPORT"
+    render_file_reference_block "初始报告-${REVISER_RUNNER}" "$INITIAL_REVISER_REPORT"
 
     echo ""
-    render_file_reference_block "初始报告-codex" "$CODEX_INITIAL_REPORT"
+    render_file_reference_block "初始报告-${REVIEWER_RUNNER}" "$INITIAL_REVIEWER_REPORT"
 
     echo ""
-    render_file_reference_block "对比分析-claude" "$CLAUDE_COMPARE_REPORT"
+    render_file_reference_block "对比分析-${REVISER_RUNNER}" "$COMPARE_REVISER_REPORT"
 
     echo ""
-    render_file_reference_block "对比分析-codex" "$CODEX_COMPARE_REPORT"
+    render_file_reference_block "对比分析-${REVIEWER_RUNNER}" "$COMPARE_REVIEWER_REPORT"
 
     cat <<EOF_PROMPT
 
@@ -489,12 +572,12 @@ EOF_PROMPT
   } >"$MERGE_PROMPT"
 }
 
-build_codex_round_prompt() {
+build_reviewer_round_prompt() {
   local round="$1"
-  local prompt_file="${PROMPTS_DIR}/04-round-${round}-codex-review.prompt.txt"
+  local prompt_file="${PROMPTS_DIR}/04-round-${round}-${REVIEWER_RUNNER}-review.prompt.txt"
   {
     cat <<EOF_PROMPT
-请评审以下“合并版审查报告”的质量与事实准确性：
+请评审以下“合并版审查报告”的质量与事实准确性。
 EOF_PROMPT
 
     echo ""
@@ -518,27 +601,27 @@ EOF_PROMPT
   echo "$prompt_file"
 }
 
-build_claude_round_prompt() {
+build_reviser_round_prompt() {
   local round="$1"
-  local codex_feedback_file="$2"
-  local prompt_file="${PROMPTS_DIR}/05-round-${round}-claude-revise.prompt.txt"
+  local reviewer_feedback_file="$2"
+  local prompt_file="${PROMPTS_DIR}/05-round-${round}-${REVISER_RUNNER}-revise.prompt.txt"
   {
     cat <<EOF_PROMPT
-请根据 codex 的评审意见修订合并版审查报告。
+请根据 ${REVIEWER_RUNNER} 的评审意见修订合并版审查报告。
 EOF_PROMPT
 
     echo ""
     render_file_reference_block "当前合并版" "$MERGED_REPORT"
 
     echo ""
-    render_file_reference_block "codex 评审意见" "$codex_feedback_file"
+    render_file_reference_block "${REVIEWER_RUNNER} 评审意见" "$reviewer_feedback_file"
 
     cat <<EOF_PROMPT
 
 请先自行读取上述文件，再决定是否采纳本轮意见并完成修订。
 
 【严格输出规则】
-- 如果你决定“全部不采纳 codex 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
+- 如果你决定“全部不采纳 ${REVIEWER_RUNNER} 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则请输出“修订后的完整 Markdown 报告正文”（完整替换版本，不要解释）。
 - 如果输出修订稿，正文必须可直接写入目标文件。
@@ -631,42 +714,9 @@ run_agent_checked() {
   fi
 }
 
-init_transcript_fresh() {
-  cat >"$TRANSCRIPT_FILE" <<EOF_TRANSCRIPT
-# AI Implementation Audit Dialogue
-
-- Task: ${TASK_NAME}
-- Started At: $(date '+%Y-%m-%d %H:%M:%S')
-- Success Marker: ${SUCCESS_MARKER}
-
-EOF_TRANSCRIPT
-}
-
-append_resume_header() {
-  local next_phase="$1"
-  local next_round="$2"
-  local reason="${3:-}"
-
-  if [[ ! -f "$TRANSCRIPT_FILE" ]]; then
-    init_transcript_fresh
-  fi
-
-  {
-    echo ""
-    echo "## $(log_ts) | Resume"
-    echo ""
-    echo "- Next phase: ${next_phase}"
-    echo "- Next round: ${next_round}"
-    if [[ -n "$reason" ]]; then
-      echo "- Resume reason: ${reason}"
-    fi
-    echo ""
-  } >>"$TRANSCRIPT_FILE"
-}
-
 is_valid_phase() {
   case "$1" in
-    initial-claude|initial-codex|compare-claude|compare-codex|merge-claude|round-codex|round-claude|completed)
+    initial-reviser|initial-reviewer|compare-reviser|compare-reviewer|merge|round-reviewer|round-reviser|completed)
       return 0
       ;;
     *)
@@ -676,7 +726,7 @@ is_valid_phase() {
 }
 
 status=""
-NEXT_PHASE="initial-claude"
+NEXT_PHASE="initial-reviser"
 NEXT_ROUND=1
 LAST_ROUND_EXECUTED=0
 
@@ -684,6 +734,8 @@ log_info "Task: ${TASK_NAME}"
 log_info "Task dir: ${TASK_DIR}"
 log_info "Config: ${CONFIG_FILE}"
 log_info "Working directory: ${WORKDIR}"
+log_info "Reviewer runner: ${REVIEWER_RUNNER}"
+log_info "Reviser runner: ${REVISER_RUNNER}"
 log_info "Max rounds: ${MAX_ROUNDS}"
 log_info "Timeout seconds: ${TIMEOUT_SECONDS}"
 log_info "Success marker: ${SUCCESS_MARKER}"
@@ -696,19 +748,13 @@ log_info "Resume: ${RESUME}"
 build_initial_prompt
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
-  init_transcript_fresh
-  write_dry_run_placeholder "$CLAUDE_INITIAL_REPORT" "Initial Review (Claude)"
-  write_dry_run_placeholder "$CODEX_INITIAL_REPORT" "Initial Review (Codex)"
+  write_dry_run_placeholder "$INITIAL_REVISER_REPORT" "Initial Review (${REVISER_RUNNER})"
+  write_dry_run_placeholder "$INITIAL_REVIEWER_REPORT" "Initial Review (${REVIEWER_RUNNER})"
   build_compare_prompt
-  write_dry_run_placeholder "$CLAUDE_COMPARE_REPORT" "Compare Analysis (Claude)"
-  write_dry_run_placeholder "$CODEX_COMPARE_REPORT" "Compare Analysis (Codex)"
+  write_dry_run_placeholder "$COMPARE_REVISER_REPORT" "Compare Analysis (${REVISER_RUNNER})"
+  write_dry_run_placeholder "$COMPARE_REVIEWER_REPORT" "Compare Analysis (${REVIEWER_RUNNER})"
   build_merge_prompt
-  write_dry_run_placeholder "$MERGED_REPORT" "Merged Report (Claude)"
-  append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "claude" "$INITIAL_PROMPT" "$CLAUDE_INITIAL_REPORT"
-  append_dialogue_entry "$TRANSCRIPT_FILE" "Initial Review" "codex" "$INITIAL_PROMPT" "$CODEX_INITIAL_REPORT"
-  append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "claude" "$COMPARE_PROMPT" "$CLAUDE_COMPARE_REPORT"
-  append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "codex" "$COMPARE_PROMPT" "$CODEX_COMPARE_REPORT"
-  append_dialogue_entry "$TRANSCRIPT_FILE" "Merge Reports" "claude" "$MERGE_PROMPT" "$MERGED_REPORT"
+  write_dry_run_placeholder "$MERGED_REPORT" "Merged Report (${REVISER_RUNNER})"
   write_progress_json "completed" "completed" 0 "dry-run-complete" "dry-run"
   publish_final_report_if_configured "$FINAL_REPORT_PATH"
   write_state_json "$STATE_FILE" "$TASK_NAME" "dry-run-complete" 0 "$MERGED_REPORT" "$SUCCESS_MARKER" "$FINAL_REPORT_OUTPUT_ABS"
@@ -728,7 +774,7 @@ if [[ "$RESUME" -eq 1 ]]; then
     is_valid_phase "$RESUME_FROM_PHASE" || fail "invalid --from-phase: $RESUME_FROM_PHASE"
     NEXT_PHASE="$RESUME_FROM_PHASE"
 
-    if [[ "$NEXT_PHASE" == "round-codex" || "$NEXT_PHASE" == "round-claude" ]]; then
+    if [[ "$NEXT_PHASE" == "round-reviewer" || "$NEXT_PHASE" == "round-reviser" ]]; then
       if [[ -n "$RESUME_FROM_ROUND" ]]; then
         NEXT_ROUND="$RESUME_FROM_ROUND"
       elif [[ "$NEXT_ROUND" -lt 1 ]]; then
@@ -736,70 +782,63 @@ if [[ "$RESUME" -eq 1 ]]; then
       fi
     else
       if [[ -n "$RESUME_FROM_ROUND" ]]; then
-        fail "--from-round can only be used with --from-phase round-codex or round-claude"
+        fail "--from-round can only be used with --from-phase round-reviewer or round-reviser"
       fi
       NEXT_ROUND=1
     fi
 
     write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "manual-resume-override"
-    append_resume_header "$NEXT_PHASE" "$NEXT_ROUND" "manual-override"
-  else
-    append_resume_header "$NEXT_PHASE" "$NEXT_ROUND"
   fi
 else
-  init_transcript_fresh
-  write_progress_json "running" "initial-claude" 1 "" "bootstrap"
+  write_progress_json "running" "initial-reviser" 1 "" "bootstrap"
 fi
 
 while :; do
   case "$NEXT_PHASE" in
-    initial-claude)
+    initial-reviser)
       run_initial_phase
-      NEXT_PHASE="compare-claude"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-claude"
+      NEXT_PHASE="compare-reviser"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-${REVISER_RUNNER}"
       ;;
 
-    initial-codex)
+    initial-reviewer)
       run_initial_phase
-      NEXT_PHASE="compare-claude"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-codex"
+      NEXT_PHASE="compare-reviser"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "initial-${REVIEWER_RUNNER}"
       ;;
 
-    compare-claude)
-      log_info "Phase start: compare-claude"
+    compare-reviser)
+      log_info "Phase start: compare (${REVISER_RUNNER})"
       build_compare_prompt
-      run_agent_checked "claude" "$COMPARE_PROMPT" "$CLAUDE_COMPARE_REPORT" \
-        "${LOGS_DIR}/02-compare-claude.log" "compare-claude" "$CLAUDE_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "claude" "$COMPARE_PROMPT" "$CLAUDE_COMPARE_REPORT"
-      log_info "Phase done: compare-claude"
-      NEXT_PHASE="compare-codex"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-claude"
+      run_agent_checked "$REVISER_RUNNER" "$COMPARE_PROMPT" "$COMPARE_REVISER_REPORT" \
+        "${LOGS_DIR}/02-compare-${REVISER_RUNNER}.log" "compare-${REVISER_RUNNER}" "$REVISER_CMD"
+      log_info "Phase done: compare (${REVISER_RUNNER})"
+      NEXT_PHASE="compare-reviewer"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-${REVISER_RUNNER}"
       ;;
 
-    compare-codex)
-      log_info "Phase start: compare-codex"
+    compare-reviewer)
+      log_info "Phase start: compare (${REVIEWER_RUNNER})"
       build_compare_prompt
-      run_agent_checked "codex" "$COMPARE_PROMPT" "$CODEX_COMPARE_REPORT" \
-        "${LOGS_DIR}/02-compare-codex.log" "compare-codex" "$CODEX_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Compare Reports" "codex" "$COMPARE_PROMPT" "$CODEX_COMPARE_REPORT"
-      log_info "Phase done: compare-codex"
-      NEXT_PHASE="merge-claude"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-codex"
+      run_agent_checked "$REVIEWER_RUNNER" "$COMPARE_PROMPT" "$COMPARE_REVIEWER_REPORT" \
+        "${LOGS_DIR}/02-compare-${REVIEWER_RUNNER}.log" "compare-${REVIEWER_RUNNER}" "$REVIEWER_CMD"
+      log_info "Phase done: compare (${REVIEWER_RUNNER})"
+      NEXT_PHASE="merge"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "compare-${REVIEWER_RUNNER}"
       ;;
 
-    merge-claude)
-      log_info "Phase start: merge-claude"
+    merge)
+      log_info "Phase start: merge (${REVISER_RUNNER})"
       build_merge_prompt
-      run_agent_checked "claude" "$MERGE_PROMPT" "$MERGED_REPORT" \
-        "${LOGS_DIR}/03-merge-claude.log" "merge-claude" "$CLAUDE_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Merge Reports" "claude" "$MERGE_PROMPT" "$MERGED_REPORT"
-      log_info "Phase done: merge-claude"
-      NEXT_PHASE="round-codex"
+      run_agent_checked "$REVISER_RUNNER" "$MERGE_PROMPT" "$MERGED_REPORT" \
+        "${LOGS_DIR}/03-merge-${REVISER_RUNNER}.log" "merge-${REVISER_RUNNER}" "$REVISER_CMD"
+      log_info "Phase done: merge (${REVISER_RUNNER})"
+      NEXT_PHASE="round-reviewer"
       NEXT_ROUND=1
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "merge-claude"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "merge-${REVISER_RUNNER}"
       ;;
 
-    round-codex)
+    round-reviewer)
       if [[ "$NEXT_ROUND" -gt "$MAX_ROUNDS" ]]; then
         status="max-rounds-reached"
         NEXT_PHASE="completed"
@@ -809,28 +848,27 @@ while :; do
 
       LAST_ROUND_EXECUTED="$NEXT_ROUND"
       round_label="$(printf '%02d' "$NEXT_ROUND")"
-      log_info "Round ${round_label}/${MAX_ROUNDS} start: codex review"
-      codex_prompt="$(build_codex_round_prompt "$round_label")"
-      codex_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-codex-review.md"
-      codex_log_file="${LOGS_DIR}/04-round-${round_label}-codex-review.log"
+      log_info "Round ${round_label}/${MAX_ROUNDS} start: ${REVIEWER_RUNNER} review"
+      reviewer_prompt="$(build_reviewer_round_prompt "$round_label")"
+      reviewer_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-${REVIEWER_RUNNER}-review.md"
+      reviewer_log_file="${LOGS_DIR}/04-round-${round_label}-${REVIEWER_RUNNER}-review.log"
 
-      run_agent_checked "codex" "$codex_prompt" "$codex_review_file" \
-        "$codex_log_file" "round-${round_label}-codex" "$CODEX_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Round ${round_label} Review" "codex" "$codex_prompt" "$codex_review_file"
-      log_info "Round ${round_label}/${MAX_ROUNDS} done: codex review"
+      run_agent_checked "$REVIEWER_RUNNER" "$reviewer_prompt" "$reviewer_review_file" \
+        "$reviewer_log_file" "round-${round_label}-${REVIEWER_RUNNER}" "$REVIEWER_CMD"
+      log_info "Round ${round_label}/${MAX_ROUNDS} done: ${REVIEWER_RUNNER} review"
 
-      if contains_marker "$codex_review_file" "$SUCCESS_MARKER"; then
-        status="accepted-by-codex-round-${round_label}"
+      if contains_marker "$reviewer_review_file" "$SUCCESS_MARKER"; then
+        status="accepted-by-${REVIEWER_RUNNER}-round-${round_label}"
         NEXT_PHASE="completed"
-        write_progress_json "completed" "$NEXT_PHASE" "$NEXT_ROUND" "$status" "round-${round_label}-codex"
+        write_progress_json "completed" "$NEXT_PHASE" "$NEXT_ROUND" "$status" "round-${round_label}-${REVIEWER_RUNNER}"
         break
       fi
 
-      NEXT_PHASE="round-claude"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "round-${round_label}-codex"
+      NEXT_PHASE="round-reviser"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "round-${round_label}-${REVIEWER_RUNNER}"
       ;;
 
-    round-claude)
+    round-reviser)
       if [[ "$NEXT_ROUND" -gt "$MAX_ROUNDS" ]]; then
         status="max-rounds-reached"
         NEXT_PHASE="completed"
@@ -840,28 +878,27 @@ while :; do
 
       LAST_ROUND_EXECUTED="$NEXT_ROUND"
       round_label="$(printf '%02d' "$NEXT_ROUND")"
-      codex_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-codex-review.md"
-      log_info "Round ${round_label}/${MAX_ROUNDS} start: claude revision"
-      claude_prompt="$(build_claude_round_prompt "$round_label" "$codex_review_file")"
-      claude_revision_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-claude-revision.md"
-      claude_log_file="${LOGS_DIR}/05-round-${round_label}-claude-revision.log"
+      reviewer_review_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-${REVIEWER_RUNNER}-review.md"
+      log_info "Round ${round_label}/${MAX_ROUNDS} start: ${REVISER_RUNNER} revision"
+      reviser_prompt="$(build_reviser_round_prompt "$round_label" "$reviewer_review_file")"
+      reviser_revision_file="${REPORTS_ROUNDS_DIR}/round-${round_label}-${REVISER_RUNNER}-revision.md"
+      reviser_log_file="${LOGS_DIR}/05-round-${round_label}-${REVISER_RUNNER}-revision.log"
 
-      run_agent_checked "claude" "$claude_prompt" "$claude_revision_file" \
-        "$claude_log_file" "round-${round_label}-claude" "$CLAUDE_CMD"
-      append_dialogue_entry "$TRANSCRIPT_FILE" "Round ${round_label} Revision" "claude" "$claude_prompt" "$claude_revision_file"
-      log_info "Round ${round_label}/${MAX_ROUNDS} done: claude revision"
+      run_agent_checked "$REVISER_RUNNER" "$reviser_prompt" "$reviser_revision_file" \
+        "$reviser_log_file" "round-${round_label}-${REVISER_RUNNER}" "$REVISER_CMD"
+      log_info "Round ${round_label}/${MAX_ROUNDS} done: ${REVISER_RUNNER} revision"
 
-      if contains_marker "$claude_revision_file" "$SUCCESS_MARKER"; then
-        status="claude-rejected-all-feedback-round-${round_label}"
+      if contains_marker "$reviser_revision_file" "$SUCCESS_MARKER"; then
+        status="${REVISER_RUNNER}-rejected-all-feedback-round-${round_label}"
         NEXT_PHASE="completed"
-        write_progress_json "completed" "$NEXT_PHASE" "$NEXT_ROUND" "$status" "round-${round_label}-claude"
+        write_progress_json "completed" "$NEXT_PHASE" "$NEXT_ROUND" "$status" "round-${round_label}-${REVISER_RUNNER}"
         break
       fi
 
-      cp "$claude_revision_file" "$MERGED_REPORT"
+      cp "$reviser_revision_file" "$MERGED_REPORT"
       NEXT_ROUND=$((NEXT_ROUND + 1))
-      NEXT_PHASE="round-codex"
-      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "round-${round_label}-claude"
+      NEXT_PHASE="round-reviewer"
+      write_progress_json "running" "$NEXT_PHASE" "$NEXT_ROUND" "" "round-${round_label}-${REVISER_RUNNER}"
       ;;
 
     completed)
@@ -894,7 +931,6 @@ log_info "Merged report: $MERGED_REPORT"
 if [[ -n "$FINAL_REPORT_OUTPUT_ABS" ]]; then
   log_info "Final report exported to: $FINAL_REPORT_OUTPUT_ABS"
 fi
-log_info "Transcript: $TRANSCRIPT_FILE"
 log_info "Progress: $PROGRESS_FILE"
 
 if [[ "$status" == "max-rounds-reached" ]]; then

@@ -20,6 +20,7 @@ fi
 
 agent_model="$(jq -r '.model // ""' "${agent_file}")"
 agent_name="$(jq -r '.name // ""' "${agent_file}")"
+agent_has_wildcard_tools="$(jq -r '(.tools // []) | index("*") != null' "${agent_file}")"
 
 if [[ "${agent_model}" != "claude-opus-4.6" ]]; then
   echo "expected model claude-opus-4.6, got: ${agent_model}"
@@ -28,5 +29,11 @@ fi
 
 if [[ "${agent_name}" != "ai-co-audit-kiro-opus" ]]; then
   echo "expected default agent name ai-co-audit-kiro-opus, got: ${agent_name}"
+  exit 1
+fi
+
+if [[ "${agent_has_wildcard_tools}" != "true" ]]; then
+  echo "expected setup script to grant wildcard tools"
+  cat "${agent_file}"
   exit 1
 fi

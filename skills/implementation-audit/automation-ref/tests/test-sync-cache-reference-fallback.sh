@@ -32,6 +32,10 @@ cat >"${reference_dir}/run-implementation-audit.sh" <<'EOF'
 #!/usr/bin/env bash
 echo run
 EOF
+cat >"${reference_dir}/setup-kiro-agent.sh" <<'EOF'
+#!/usr/bin/env bash
+echo setup-kiro-agent
+EOF
 cat >"${reference_dir}/sync-automation.sh" <<'EOF'
 #!/usr/bin/env bash
 echo sync
@@ -49,6 +53,7 @@ chmod +x \
   "${reference_dir}/init.sh" \
   "${reference_dir}/init-implementation-audit-task.sh" \
   "${reference_dir}/run-implementation-audit.sh" \
+  "${reference_dir}/setup-kiro-agent.sh" \
   "${reference_dir}/sync-automation.sh" \
   "${reference_dir}/lib/common.sh" \
   "${reference_dir}/lib/runner.sh"

@@ -14,7 +14,7 @@ FORCE=0
 usage() {
   cat <<'USAGE'
 Usage:
-  automation/implementation-audit-kiro/setup-kiro-agent.sh [options]
+  automation/implementation-audit/setup-kiro-agent.sh [options]
 
 Options:
   --project-root <dir>  Target project root (default: current workflow repo root)
@@ -81,13 +81,23 @@ fi
 
 cat >"${AGENT_FILE}" <<EOF
 {
+  "\$schema": "https://raw.githubusercontent.com/aws/amazon-q-developer-cli/refs/heads/main/schemas/agent-v1.json",
   "name": "${AGENT_NAME}",
   "description": "AI co-audit primary reviewer (Kiro CLI).",
   "prompt": "You are a pragmatic software engineering reviewer focused on precise, evidence-based implementation audits.",
+  "mcpServers": {},
+  "tools": [
+    "*"
+  ],
+  "toolAliases": {},
+  "allowedTools": [],
   "model": "${MODEL_NAME}",
   "resources": [
     "skill://.kiro/skills/**/SKILL.md"
-  ]
+  ],
+  "hooks": {},
+  "toolsSettings": {},
+  "useLegacyMcpJson": true
 }
 EOF
 

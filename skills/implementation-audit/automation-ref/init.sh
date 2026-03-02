@@ -18,11 +18,13 @@ WORKING_DIRECTORY="."
 FINAL_REPORT_PATH=""
 SUCCESS_MARKER="当前版本已无问题，可以作为正式版本使用"
 FORCE=0
-CLAUDE_CMD=""
-CODEX_CMD=""
 INPUTS=()
 AUTO_META_WITH_CLAUDE=1
 USER_PROVIDED_TASK_ID=0
+REVIEWER_RUNNER="codex"
+REVISER_RUNNER="claude"
+KIRO_AGENT_NAME="ai-co-audit-kiro-opus"
+RUNNER_CMD_PAIRS=()
 DEFAULT_OBJECTIVE="检查未完成的、与设计不符合的、违反设计原则的、重复实现的、逻辑不能自洽的、实现存在矛盾的问题，并给出可验证证据（文件路径 + 行号）。"
 
 slugify() {
@@ -31,6 +33,11 @@ slugify() {
   normalized="$(printf "%s" "$raw" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-')"
   normalized="$(printf "%s" "$normalized" | sed 's/^-*//;s/-*$//;s/-\{2,\}/-/g')"
   printf "%s" "$normalized"
+}
+
+validate_runner_name() {
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid runner name: $name"
 }
 
 input_list_text() {
@@ -159,25 +166,27 @@ Usage:
   automation/implementation-audit/init.sh --input <file> [--input <file> ...] [options]
 
 Options:
-  --input <file>            Input file to audit (repeatable, required)
-  --prompt <text>           Audit prompt/objective text (optional)
-  --prompt-file <file>      Read audit prompt/objective from file (optional)
+  --input <file>             Input file to audit (repeatable, required)
+  --prompt <text>            Audit prompt/objective text (optional)
+  --prompt-file <file>       Read audit prompt/objective from file (optional)
 
-  --task-id <id>            Override auto-generated task id
-  --task-name <name>        Override auto-generated task name
-  --report-base-name <name> Override auto-generated report base name
-  --objective <text>        Alias of --prompt
-  --objective-file <file>   Alias of --prompt-file
-  --max-rounds <n>          Max review rounds (default: 15)
-  --timeout-seconds <n>     Per-agent timeout (default: 7200)
-  --working-directory <dir> Working directory for agent commands (default: .)
-  --final-report-path <p>   Save final merged report to this relative path (relative to working directory)
-  --success-marker <text>   Loop-exit marker string
-  --claude-cmd <cmd>        Custom claude command (reads prompt from stdin)
-  --codex-cmd <cmd>         Custom codex command (reads prompt from stdin)
-  --no-claude-meta          Do not use claude for task meta generation
-  --force                   Overwrite existing task directory
-  -h, --help                Show help
+  --task-id <id>             Override auto-generated task id
+  --task-name <name>         Override auto-generated task name
+  --report-base-name <name>  Override auto-generated report base name
+  --objective <text>         Alias of --prompt
+  --objective-file <file>    Alias of --prompt-file
+  --reviewer <runner>        Reviewer runner (default: codex)
+  --reviser <runner>         Reviser runner (default: claude)
+  --runner-cmd <r=cmd>       Runner command override, repeatable
+  --kiro-agent <name>        Default Kiro agent name for built-in kiro runner
+  --max-rounds <n>           Max review rounds (default: 15)
+  --timeout-seconds <n>      Per-agent timeout (default: 7200)
+  --working-directory <dir>  Working directory for agent commands (default: .)
+  --final-report-path <p>    Save final merged report to this relative path (relative to working directory)
+  --success-marker <text>    Loop-exit marker string
+  --no-claude-meta           Do not use claude for task meta generation
+  --force                    Overwrite existing task directory
+  -h, --help                 Show help
 USAGE
 }
 
@@ -221,6 +230,22 @@ while [[ $# -gt 0 ]]; do
       REPORT_BASE_NAME="$2"
       shift 2
       ;;
+    --reviewer)
+      REVIEWER_RUNNER="$2"
+      shift 2
+      ;;
+    --reviser)
+      REVISER_RUNNER="$2"
+      shift 2
+      ;;
+    --runner-cmd)
+      RUNNER_CMD_PAIRS+=("$2")
+      shift 2
+      ;;
+    --kiro-agent)
+      KIRO_AGENT_NAME="$2"
+      shift 2
+      ;;
     --max-rounds)
       MAX_ROUNDS="$2"
       shift 2
@@ -239,14 +264,6 @@ while [[ $# -gt 0 ]]; do
       ;;
     --success-marker)
       SUCCESS_MARKER="$2"
-      shift 2
-      ;;
-    --claude-cmd)
-      CLAUDE_CMD="$2"
-      shift 2
-      ;;
-    --codex-cmd)
-      CODEX_CMD="$2"
       shift 2
       ;;
     --no-claude-meta)
@@ -270,6 +287,11 @@ done
 [[ "${#INPUTS[@]}" -gt 0 ]] || fail "At least one --input is required"
 validate_inputs_exist
 
+validate_runner_name "$REVIEWER_RUNNER"
+validate_runner_name "$REVISER_RUNNER"
+[[ "$REVIEWER_RUNNER" != "$REVISER_RUNNER" ]] || fail "reviewer and reviser must be different"
+[[ -n "$KIRO_AGENT_NAME" ]] || fail "--kiro-agent must not be empty"
+
 if [[ -n "$OBJECTIVE_FILE" ]]; then
   if [[ -f "$OBJECTIVE_FILE" ]]; then
     OBJECTIVE="$(cat "$OBJECTIVE_FILE")"
@@ -287,6 +309,17 @@ fi
 if [[ -n "$FINAL_REPORT_PATH" && "$FINAL_REPORT_PATH" = /* ]]; then
   fail "--final-report-path must be a relative path (relative to working directory)"
 fi
+
+for pair in "${RUNNER_CMD_PAIRS[@]-}"; do
+  [[ -n "$pair" ]] || continue
+  if [[ "$pair" != *=* ]]; then
+    fail "--runner-cmd must use <runner>=<command> format"
+  fi
+  runner="${pair%%=*}"
+  cmd="${pair#*=}"
+  validate_runner_name "$runner"
+  [[ -n "$cmd" ]] || fail "runner command must not be empty for $runner"
+done
 
 FINAL_REPORT_PATH_DISPLAY="(not configured)"
 if [[ -n "$FINAL_REPORT_PATH" ]]; then
@@ -332,12 +365,24 @@ ensure_dir "$TASK_DIR/reports/merged"
 ensure_dir "$TASK_DIR/reports/rounds"
 ensure_dir "$TASK_DIR/logs"
 ensure_dir "$TASK_DIR/state"
-ensure_dir "$TASK_DIR/transcripts"
 
 printf "%s\n" "${INPUTS[@]}" >"${TASK_DIR}/inputs/targets.txt"
 printf "%s\n" "$OBJECTIVE" >"${TASK_DIR}/inputs/objective.txt"
 
 inputs_json="$(printf "%s\n" "${INPUTS[@]}" | jq -R . | jq -s .)"
+
+runners_json="$(jq -n --arg kiroAgent "$KIRO_AGENT_NAME" '{
+  claude: {command: ""},
+  codex: {command: ""},
+  kiro: {command: "", agent: $kiroAgent}
+}')"
+
+for pair in "${RUNNER_CMD_PAIRS[@]-}"; do
+  [[ -n "$pair" ]] || continue
+  runner="${pair%%=*}"
+  cmd="${pair#*=}"
+  runners_json="$(jq -c --arg runner "$runner" --arg command "$cmd" '.[$runner] = ((.[$runner] // {}) + {command: $command})' <<<"$runners_json")"
+done
 
 jq -n \
   --arg taskName "$TASK_NAME" \
@@ -346,11 +391,12 @@ jq -n \
   --arg successMarker "$SUCCESS_MARKER" \
   --arg workingDirectory "$WORKING_DIRECTORY" \
   --arg finalReportPath "" \
-  --arg claudeCmd "$CLAUDE_CMD" \
-  --arg codexCmd "$CODEX_CMD" \
+  --arg reviewer "$REVIEWER_RUNNER" \
+  --arg reviser "$REVISER_RUNNER" \
   --argjson maxRounds "$MAX_ROUNDS" \
   --argjson timeoutSeconds "$TIMEOUT_SECONDS" \
   --argjson inputs "$inputs_json" \
+  --argjson runners "$runners_json" \
   '{
     taskName: $taskName,
     objective: $objective,
@@ -361,10 +407,11 @@ jq -n \
     workingDirectory: $workingDirectory,
     finalReportPath: $finalReportPath,
     successMarker: $successMarker,
-    agents: {
-      claude: { command: $claudeCmd },
-      codex: { command: $codexCmd }
-    }
+    execution: {
+      reviewer: $reviewer,
+      reviser: $reviser
+    },
+    runners: $runners
   }' >"${TASK_DIR}/config/task.json"
 
 FINAL_REPORT_ARG=""
@@ -414,7 +461,7 @@ cat >"${TASK_DIR}/README.md" <<EOF
 ## Continue From Phase
 
 \`\`\`bash
-./.ai-workflows/${TASK_ID}/continue --from-phase round-codex --from-round 3
+./.ai-workflows/${TASK_ID}/continue --from-phase round-reviewer --from-round 3
 \`\`\`
 
 ## Config
@@ -429,7 +476,6 @@ cat >"${TASK_DIR}/README.md" <<EOF
 - Compare reports: \`.ai-workflows/${TASK_ID}/reports/comparison/\`
 - Merged report: \`.ai-workflows/${TASK_ID}/reports/merged/\`
 - Round outputs: \`.ai-workflows/${TASK_ID}/reports/rounds/\`
-- Dialogue transcript: \`.ai-workflows/${TASK_ID}/transcripts/implementation-audit-dialogue.md\`
 - Progress checkpoint: \`.ai-workflows/${TASK_ID}/state/progress.json\`
 - State: \`.ai-workflows/${TASK_ID}/state/state.json\`
 - Final report export path (if configured): \`${FINAL_REPORT_PATH_DISPLAY}\`

@@ -35,12 +35,24 @@ run_agent() {
   rm -f "$output_file" "$log_file"
 
   if [[ -n "$custom_cmd" ]]; then
-    (
-      cd "$workdir"
-      timeout --foreground "${timeout_seconds}s" bash -lc "$custom_cmd" \
-        <"$prompt_file" >"$output_file" 2>"$log_file"
-    )
-    rc=$?
+    if [[ "$agent" == "claude" || "$agent" == "kiro" ]]; then
+      claude_prompt_file="$(mktemp)"
+      augment_claude_prompt_for_file_output "$prompt_file" "$output_file" "$claude_prompt_file"
+      (
+        cd "$workdir"
+        timeout --foreground "${timeout_seconds}s" bash -lc "$custom_cmd" \
+          <"$claude_prompt_file" >"$log_file" 2>&1
+      )
+      rc=$?
+      rm -f "$claude_prompt_file"
+    else
+      (
+        cd "$workdir"
+        timeout --foreground "${timeout_seconds}s" bash -lc "$custom_cmd" \
+          <"$prompt_file" >"$output_file" 2>"$log_file"
+      )
+      rc=$?
+    fi
   else
     case "$agent" in
       claude)
@@ -74,6 +86,21 @@ run_agent() {
               <"$prompt_file" >"$log_file" 2>&1
         )
         rc=$?
+        ;;
+      kiro)
+        claude_prompt_file="$(mktemp)"
+        augment_claude_prompt_for_file_output "$prompt_file" "$output_file" "$claude_prompt_file"
+        (
+          cd "$workdir"
+          local kiro_agent="${IMPLEMENTATION_AUDIT_KIRO_AGENT:-ai-co-audit-kiro-opus}"
+          local kiro_prompt=""
+          kiro_prompt="$(cat "$claude_prompt_file")"
+          timeout --foreground "${timeout_seconds}s" \
+            kiro-cli chat --agent "$kiro_agent" --no-interactive --trust-all-tools "$kiro_prompt" \
+            >>"$log_file" 2>>"$log_file"
+        )
+        rc=$?
+        rm -f "$claude_prompt_file"
         ;;
       *)
         echo "unknown agent: $agent" >&2
