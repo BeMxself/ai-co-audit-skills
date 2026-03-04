@@ -20,7 +20,20 @@ Install plugin:
 /plugin install implementation-audit@BeMxself-ai-co-audit-skills
 ```
 
-Then invoke `/implementation-audit`.
+Then invoke with namespaced command:
+
+```text
+/implementation-audit:implementation-audit
+```
+
+If the skill is not visible after install, run:
+
+```text
+/plugin marketplace update BeMxself-ai-co-audit-skills
+/plugin update implementation-audit@BeMxself-ai-co-audit-skills
+```
+
+Then restart the Claude Code session.
 
 ### Codex (Skills)
 

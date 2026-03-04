@@ -20,7 +20,20 @@
 /plugin install implementation-audit@BeMxself-ai-co-audit-skills
 ```
 
-安装完成后，可用 `/implementation-audit` 调用。
+安装完成后，在 Claude Code 中用命名空间指令调用：
+
+```text
+/implementation-audit:implementation-audit
+```
+
+如果安装后看不到技能，先执行：
+
+```text
+/plugin marketplace update BeMxself-ai-co-audit-skills
+/plugin update implementation-audit@BeMxself-ai-co-audit-skills
+```
+
+然后重启 Claude Code 会话。
 
 ### Codex (Skills)
 
