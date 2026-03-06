@@ -20,6 +20,7 @@ fi
 
 agent_model="$(jq -r '.model // ""' "${agent_file}")"
 agent_name="$(jq -r '.name // ""' "${agent_file}")"
+agent_resource="$(jq -r '.resources[0] // ""' "${agent_file}")"
 agent_has_wildcard_tools="$(jq -r '(.tools // []) | index("*") != null' "${agent_file}")"
 
 if [[ "${agent_model}" != "claude-opus-4.6" ]]; then
@@ -29,6 +30,12 @@ fi
 
 if [[ "${agent_name}" != "ai-co-audit-kiro-opus" ]]; then
   echo "expected default agent name ai-co-audit-kiro-opus, got: ${agent_name}"
+  exit 1
+fi
+
+expected_resource="skill://~/.kiro/skills/**/SKILL.md"
+if [[ "${agent_resource}" != "${expected_resource}" ]]; then
+  echo "expected first resource ${expected_resource}, got: ${agent_resource}"
   exit 1
 fi
 

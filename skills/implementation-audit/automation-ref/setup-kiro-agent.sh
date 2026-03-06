@@ -93,7 +93,7 @@ cat >"${AGENT_FILE}" <<EOF
   "allowedTools": [],
   "model": "${MODEL_NAME}",
   "resources": [
-    "skill://.kiro/skills/**/SKILL.md"
+    "skill://~/.kiro/skills/**/SKILL.md"
   ],
   "hooks": {},
   "toolsSettings": {},
