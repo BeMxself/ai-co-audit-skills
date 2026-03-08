@@ -25,6 +25,10 @@ REVIEWER_RUNNER="codex"
 REVISER_RUNNER="claude"
 KIRO_AGENT_NAME="ai-co-audit-kiro-opus"
 RUNNER_CMD_PAIRS=()
+DEFAULT_INITIAL_REVIEWER_PROMPT_PROFILE="strict"
+DEFAULT_INITIAL_REVISER_PROMPT_PROFILE="balanced"
+INITIAL_REVIEWER_PROMPT_PROFILE=""
+INITIAL_REVISER_PROMPT_PROFILE=""
 DEFAULT_OBJECTIVE="检查未完成的、与设计不符合的、违反设计原则的、重复实现的、逻辑不能自洽的、实现存在矛盾的问题，并给出可验证证据（文件路径 + 行号）。"
 
 slugify() {
@@ -35,9 +39,86 @@ slugify() {
   printf "%s" "$normalized"
 }
 
+current_task_date_tag() {
+  date '+%Y%m%d'
+}
+
+normalize_task_id_core() {
+  local raw="$1"
+  local normalized=""
+  local original=""
+  local trimmed=""
+  local previous=""
+
+  normalized="$(slugify "$raw")"
+  original="$normalized"
+
+  while [[ "$normalized" != "$previous" ]]; do
+    previous="$normalized"
+    normalized="$(printf "%s" "$normalized" | sed -E 's/^([0-9]{8}-[0-9]{6}|[0-9]{8}|[0-9]{4}-[0-9]{2}-[0-9]{2})-//')"
+  done
+
+  trimmed="$(printf "%s" "$normalized" | sed -E 's/(-implementation-audit)+$//')"
+  [[ -n "$trimmed" ]] && normalized="$trimmed"
+
+  [[ -n "$normalized" ]] || normalized="$original"
+  [[ -n "$normalized" ]] || normalized="implementation-audit"
+  printf "%s" "$normalized"
+}
+
+build_auto_task_id() {
+  local raw="$1"
+  local task_core=""
+
+  task_core="$(normalize_task_id_core "$raw")"
+  printf "%s-%s" "$(current_task_date_tag)" "$task_core"
+}
+
 validate_runner_name() {
   local name="$1"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid runner name: $name"
+}
+
+validate_initial_prompt_profile() {
+  local profile="$1"
+  [[ "$profile" == "balanced" || "$profile" == "strict" ]] || fail "invalid initial prompt profile: $profile"
+}
+
+extract_initial_prompt_profile_marker() {
+  local role="$1"
+  local text="$2"
+  local role_pattern="$role"
+
+  if [[ "$text" =~ \[initial-${role_pattern}-prompt[[:space:]]*[:=][[:space:]]*(balanced|strict)\] ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  if [[ "$text" =~ \[initial-prompts[[:space:]]*[:=][[:space:]]*(balanced|strict)\] ]]; then
+    printf "%s" "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve_initial_prompt_profiles() {
+  local reviewer_profile="${DEFAULT_INITIAL_REVIEWER_PROMPT_PROFILE}"
+  local reviser_profile="${DEFAULT_INITIAL_REVISER_PROMPT_PROFILE}"
+  local reviewer_marker=""
+  local reviser_marker=""
+
+  reviewer_marker="$(extract_initial_prompt_profile_marker reviewer "$OBJECTIVE" || true)"
+  reviser_marker="$(extract_initial_prompt_profile_marker reviser "$OBJECTIVE" || true)"
+
+  [[ -n "$reviewer_marker" ]] && reviewer_profile="$reviewer_marker"
+  [[ -n "$reviser_marker" ]] && reviser_profile="$reviser_marker"
+
+  validate_initial_prompt_profile "$reviewer_profile"
+  validate_initial_prompt_profile "$reviser_profile"
+
+  INITIAL_REVIEWER_PROMPT_PROFILE="$reviewer_profile"
+  INITIAL_REVISER_PROMPT_PROFILE="$reviser_profile"
 }
 
 input_list_text() {
@@ -91,10 +172,10 @@ $(input_list_text)
 【输出要求】
 1. 只输出一个 JSON 对象，不要输出 markdown 代码块，不要输出解释文字。
 2. JSON 字段必须包含：
-   - taskId: 英文小写短横线风格，适合目录名
-   - taskName: 可读任务名
+   - taskId: 简洁英文小写短横线风格，适合目录名；不要包含时间戳，不要重复输入文件名里的日期，尽量控制在 3-6 个词
+   - taskName: 可读任务名，尽量简洁，不要机械重复 implementation audit 等上下文里已经明确的信息
    - reportBaseName: 英文小写短横线风格，适合文件名前缀
-3. taskId 和 reportBaseName 必须体现 implementation-audit 语义。
+3. taskId 和 reportBaseName 需要表达 implementation-audit 语义，但不要为了强调语义而机械重复 implementation-audit 后缀。
 EOF
 )"
 
@@ -107,7 +188,7 @@ EOF
   generated_task_name="$(printf "%s" "$json_payload" | jq -r '.taskName // empty')"
   generated_report_base_name="$(printf "%s" "$json_payload" | jq -r '.reportBaseName // empty')"
 
-  generated_task_id="$(slugify "$generated_task_id")"
+  generated_task_id="$(build_auto_task_id "$generated_task_id")"
   generated_report_base_name="$(slugify "$generated_report_base_name")"
 
   [[ -n "$generated_task_id" ]] || return 1
@@ -122,16 +203,12 @@ EOF
 
 generate_meta_fallback() {
   local first_input_basename=""
-  local first_input_slug=""
-  local time_tag=""
 
   first_input_basename="$(basename "${INPUTS[0]}")"
   first_input_basename="${first_input_basename%.*}"
-  first_input_slug="$(slugify "$first_input_basename")"
-  [[ -n "$first_input_slug" ]] || first_input_slug="artifact"
+  [[ -n "$(slugify "$first_input_basename")" ]] || first_input_basename="artifact"
 
-  time_tag="$(date '+%Y%m%d-%H%M%S')"
-  TASK_ID="${TASK_ID:-${time_tag}-${first_input_slug}-implementation-audit}"
+  TASK_ID="${TASK_ID:-$(build_auto_task_id "$first_input_basename")}"
   TASK_NAME="${TASK_NAME:-Implementation Audit - ${first_input_basename}}"
   REPORT_BASE_NAME="${REPORT_BASE_NAME:-${TASK_ID}-implementation-audit-report}"
 }
@@ -326,6 +403,8 @@ if [[ -n "$FINAL_REPORT_PATH" ]]; then
   FINAL_REPORT_PATH_DISPLAY="(configured)"
 fi
 
+resolve_initial_prompt_profiles
+
 if [[ -z "$TASK_ID" || -z "$TASK_NAME" || -z "$REPORT_BASE_NAME" ]]; then
   if [[ "$AUTO_META_WITH_CLAUDE" -eq 1 ]] && try_generate_meta_with_claude; then
     log_info "Task metadata generated by claude."
@@ -393,6 +472,8 @@ jq -n \
   --arg finalReportPath "" \
   --arg reviewer "$REVIEWER_RUNNER" \
   --arg reviser "$REVISER_RUNNER" \
+  --arg initialReviewerPromptProfile "$INITIAL_REVIEWER_PROMPT_PROFILE" \
+  --arg initialReviserPromptProfile "$INITIAL_REVISER_PROMPT_PROFILE" \
   --argjson maxRounds "$MAX_ROUNDS" \
   --argjson timeoutSeconds "$TIMEOUT_SECONDS" \
   --argjson inputs "$inputs_json" \
@@ -410,6 +491,12 @@ jq -n \
     execution: {
       reviewer: $reviewer,
       reviser: $reviser
+    },
+    promptProfiles: {
+      initial: {
+        reviewer: $initialReviewerPromptProfile,
+        reviser: $initialReviserPromptProfile
+      }
     },
     runners: $runners
   }' >"${TASK_DIR}/config/task.json"

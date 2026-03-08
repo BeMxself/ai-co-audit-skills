@@ -20,7 +20,7 @@ RESUME_FROM_ROUND=""
 FINAL_REPORT_PATH_OVERRIDE=""
 REVIEWER_RUNNER_OVERRIDE=""
 REVISER_RUNNER_OVERRIDE=""
-PLUGIN_VERSION="2.0.1"
+PLUGIN_VERSION="2.1.0"
 RUNNING_BG_PIDS=()
 
 REVIEWER_RUNNER=""
@@ -28,6 +28,10 @@ REVISER_RUNNER=""
 REVIEWER_CMD=""
 REVISER_CMD=""
 KIRO_AGENT_NAME=""
+DEFAULT_INITIAL_REVIEWER_PROMPT_PROFILE="strict"
+DEFAULT_INITIAL_REVISER_PROMPT_PROFILE="balanced"
+INITIAL_REVIEWER_PROMPT_PROFILE=""
+INITIAL_REVISER_PROMPT_PROFILE=""
 
 register_running_bg_pids() {
   RUNNING_BG_PIDS=("$@")
@@ -111,6 +115,11 @@ USAGE
 validate_runner_name() {
   local name="$1"
   [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid runner name: $name"
+}
+
+validate_initial_prompt_profile() {
+  local profile="$1"
+  [[ "$profile" == "balanced" || "$profile" == "strict" ]] || fail "invalid initial prompt profile: $profile"
 }
 
 runner_command_from_config() {
@@ -272,12 +281,18 @@ WORKING_DIRECTORY="$(json_optional "$CONFIG_FILE" '.workingDirectory')"
 FINAL_REPORT_PATH="$(json_optional "$CONFIG_FILE" '.finalReportPath')"
 REVIEWER_RUNNER_CFG="$(json_optional "$CONFIG_FILE" '.execution.reviewer')"
 REVISER_RUNNER_CFG="$(json_optional "$CONFIG_FILE" '.execution.reviser')"
+INITIAL_REVIEWER_PROMPT_PROFILE_CFG="$(json_optional "$CONFIG_FILE" '.promptProfiles.initial.reviewer')"
+INITIAL_REVISER_PROMPT_PROFILE_CFG="$(json_optional "$CONFIG_FILE" '.promptProfiles.initial.reviser')"
 
 REVIEWER_RUNNER="${REVIEWER_RUNNER_OVERRIDE:-${REVIEWER_RUNNER_CFG:-codex}}"
 REVISER_RUNNER="${REVISER_RUNNER_OVERRIDE:-${REVISER_RUNNER_CFG:-claude}}"
+INITIAL_REVIEWER_PROMPT_PROFILE="${INITIAL_REVIEWER_PROMPT_PROFILE_CFG:-$DEFAULT_INITIAL_REVIEWER_PROMPT_PROFILE}"
+INITIAL_REVISER_PROMPT_PROFILE="${INITIAL_REVISER_PROMPT_PROFILE_CFG:-$DEFAULT_INITIAL_REVISER_PROMPT_PROFILE}"
 
 validate_runner_name "$REVIEWER_RUNNER"
 validate_runner_name "$REVISER_RUNNER"
+validate_initial_prompt_profile "$INITIAL_REVIEWER_PROMPT_PROFILE"
+validate_initial_prompt_profile "$INITIAL_REVISER_PROMPT_PROFILE"
 [[ "$REVIEWER_RUNNER" != "$REVISER_RUNNER" ]] || fail "reviewer and reviser must be different runners"
 
 REVIEWER_CMD="$(runner_command_from_config "$REVIEWER_RUNNER")"
@@ -347,7 +362,8 @@ ensure_dir "${STATE_DIR}"
 
 printf "%s\n" "${INPUT_FILES[@]}" >"${INPUTS_FILE}"
 
-INITIAL_PROMPT="${PROMPTS_DIR}/01-initial-review.prompt.txt"
+INITIAL_REVIEWER_PROMPT="${PROMPTS_DIR}/01-initial-${REVIEWER_RUNNER}.prompt.txt"
+INITIAL_REVISER_PROMPT="${PROMPTS_DIR}/01-initial-${REVISER_RUNNER}.prompt.txt"
 COMPARE_PROMPT="${PROMPTS_DIR}/02-compare.prompt.txt"
 MERGE_PROMPT="${PROMPTS_DIR}/03-merge.prompt.txt"
 
@@ -385,14 +401,14 @@ run_initial_phase() {
     rm -f "$reviser_rc_file" "$reviewer_rc_file"
     set -m
     (
-      run_agent "$REVISER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVISER_REPORT" \
+      run_agent "$REVISER_RUNNER" "$INITIAL_REVISER_PROMPT" "$INITIAL_REVISER_REPORT" \
         "${LOGS_DIR}/01-initial-${REVISER_RUNNER}.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$REVISER_CMD"
       echo $? >"$reviser_rc_file"
     ) &
     reviser_pid=$!
 
     (
-      run_agent "$REVIEWER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVIEWER_REPORT" \
+      run_agent "$REVIEWER_RUNNER" "$INITIAL_REVIEWER_PROMPT" "$INITIAL_REVIEWER_REPORT" \
         "${LOGS_DIR}/01-initial-${REVIEWER_RUNNER}.log" "$TIMEOUT_SECONDS" "$WORKDIR" "$REVIEWER_CMD"
       echo $? >"$reviewer_rc_file"
     ) &
@@ -442,7 +458,7 @@ run_initial_phase() {
 
   if [[ "$need_reviser" -eq 1 ]]; then
     log_info "Phase start: initial (${REVISER_RUNNER})"
-    run_agent_checked "$REVISER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVISER_REPORT" \
+    run_agent_checked "$REVISER_RUNNER" "$INITIAL_REVISER_PROMPT" "$INITIAL_REVISER_REPORT" \
       "${LOGS_DIR}/01-initial-${REVISER_RUNNER}.log" "initial-${REVISER_RUNNER}" "$REVISER_CMD"
     log_info "Phase done: initial (${REVISER_RUNNER})"
   fi
@@ -450,7 +466,7 @@ run_initial_phase() {
   if [[ "$need_reviewer" -eq 1 ]]; then
     log_info "Phase start: initial (${REVIEWER_RUNNER})"
     NEXT_PHASE="initial-reviewer"
-    run_agent_checked "$REVIEWER_RUNNER" "$INITIAL_PROMPT" "$INITIAL_REVIEWER_REPORT" \
+    run_agent_checked "$REVIEWER_RUNNER" "$INITIAL_REVIEWER_PROMPT" "$INITIAL_REVIEWER_REPORT" \
       "${LOGS_DIR}/01-initial-${REVIEWER_RUNNER}.log" "initial-${REVIEWER_RUNNER}" "$REVIEWER_CMD"
     log_info "Phase done: initial (${REVIEWER_RUNNER})"
   fi
@@ -494,8 +510,13 @@ ${rel_file}
 EOF_BLOCK
 }
 
-build_initial_prompt() {
-  cat >"$INITIAL_PROMPT" <<EOF_PROMPT
+build_initial_prompt_for_profile() {
+  local profile="$1"
+  local prompt_file="$2"
+
+  case "$profile" in
+    balanced)
+      cat >"$prompt_file" <<EOF_PROMPT
 你是资深评审工程师。请基于以下输入材料进行实现一致性会审。
 
 【评审目标】
@@ -506,12 +527,46 @@ $(build_input_list)
 
 【输出要求】
 1. 输出 Markdown 审查报告。
-2. 优先找出：未完成、与设计不符合、违反设计原则、重复实现、逻辑不自洽、实现矛盾。
-3. 按严重级别排序（先高后低）。
-4. 每条问题必须给出可验证证据（文件路径 + 行号）。
-5. 最后补充：未阻断但建议跟进项。
-6. 报告正文必须可直接写入目标文件（不要额外说明文字）。
+2. 先自行理解输入材料中的关键要求、实现约束、已有结论、风险提示，以及需要重点核对的信息。
+3. 基于这些材料，重点识别：未落实、与设计或要求不一致、违反约束、重复实现、逻辑不自洽、实现之间相互矛盾、材料之间结论不一致，或被过度乐观判定为“已完成/已满足”的地方。
+4. 尽量覆盖输入材料中的主要核查面，不要只挑最容易发现的少数点。
+5. 如果你判断某项“已完成”“已修复”或“已满足”，请确认该结论不是仅凭局部结构、单点代码或表面接入得出；如果只能证明局部成立，请明确写为“部分完成”“证据不足”或“仍需确认”。
+6. 如果你提出的是基于本轮阅读形成的新增观察、新增风险或衍生问题，请与输入材料中已经明确提出的要求、结论或判断区分表述，避免混淆。
+7. 按严重级别排序（先高后低）。
+8. 每条问题或观察都必须给出可验证证据（文件路径 + 行号）；如果某项只能部分确认，也要明确说明证据边界。
+9. 最后补充：未阻断但建议后续继续核对、完善或澄清的事项。
+10. 报告正文必须可直接写入目标文件（不要额外说明文字）。
 EOF_PROMPT
+      ;;
+    strict)
+      cat >"$prompt_file" <<EOF_PROMPT
+你是资深评审工程师。请基于以下输入材料进行实现一致性会审。
+
+【评审目标】
+${OBJECTIVE}
+
+【输入材料】
+$(build_input_list)
+
+【输出要求】
+1. 输出 Markdown 审查报告。
+2. 先自行提炼输入材料中的关键要求、约束、结论和需要验证的主张。
+3. 重点审查以下内容：未落实、与设计或要求不一致、违反约束、逻辑不自洽、实现之间相互矛盾、材料之间结论冲突、以及可能被过度乐观判定为“已完成/已满足”的地方。
+4. 尽量覆盖输入材料中的主要问题面，不要只挑最容易发现的少数问题。
+5. 如果你判断某项“已完成”或“已修复”，请确认该结论经得起关键链路和实际影响范围的检验；如果只能证明局部成立，请明确写为“部分完成”“证据不足”或“仍需确认”。
+6. 如果你提出的是基于本轮阅读发现的新增问题或新增风险，请与输入材料中原有结论分开表述，避免混入原始结论体系。
+7. 按严重级别排序（先高后低）。
+8. 每条问题必须给出可验证证据（文件路径 + 行号），并尽量说明它影响的是哪类要求、结论或实现一致性。
+9. 最后补充：未阻断但建议跟进项。
+10. 报告正文必须可直接写入目标文件（不要额外说明文字）。
+EOF_PROMPT
+      ;;
+  esac
+}
+
+build_initial_prompts() {
+  build_initial_prompt_for_profile "$INITIAL_REVISER_PROMPT_PROFILE" "$INITIAL_REVISER_PROMPT"
+  build_initial_prompt_for_profile "$INITIAL_REVIEWER_PROMPT_PROFILE" "$INITIAL_REVIEWER_PROMPT"
 }
 
 build_compare_prompt() {
@@ -568,6 +623,15 @@ EOF_PROMPT
 3. 所有问题按严重级别排序并包含证据路径+行号。
 4. 加入“审查边界/待确认项”。
 5. 报告正文必须可直接写入目标文件。
+
+【合并后自检（必须在内部完成）】
+1. 摘要中的各状态数量之和必须与基准项总数一致。
+2. 完成度百分比必须能由正文状态桶直接推导。
+3. 每个编号只能在一个最终状态桶中出现。
+4. 高/中优先级问题必须包含最小证据定位。
+5. “待确认 / 设计拒绝 / 无需修复”必须说明判定依据。
+6. 如果正文使用“人工审查确认 / 不采纳”结论，必须给出来源定位，或在附录集中列出。
+7. 如果包含最小复现或示例，必须保证示例本身事实成立。
 EOF_PROMPT
   } >"$MERGE_PROMPT"
 }
@@ -587,14 +651,34 @@ EOF_PROMPT
 
 请先自行读取上述报告文件。
 
-重点检查：
-1. 是否还有事实错误、误报、证据不足、矛盾表述。
-2. 是否存在可改进之处（分级、措辞、证据完整性）。
+你的职责不是继续润色，而是判断：这份报告是否已经达到“可归档的正式审查版本”。
+
+【评审原则】
+1. 本轮请尽量一次性列出所有“仍然值得修改”的问题，不要只挑最显眼的一两条。
+2. 优先发现会影响结论正确性的实质问题；只有当不存在实质问题时，才提出低优先级的表述 / 排版 / 附录建议。
+3. 同一根因或同一类型的问题请合并成一条，不要拆成多条“挤牙膏式”意见。
+4. 如果某个问题只是“可以更好”，但不影响事实、结论、状态判定、证据可追溯性，请不要提出。
+5. 如果你提出低优先级问题，说明为什么它仍值得阻止报告收敛；否则不要提。
+
+【强制检查清单】
+A. 摘要统计、状态桶、完成度、编号归类是否自洽。
+B. 每个高 / 中优先级结论是否有足够证据支撑，且不存在误报 / 过推断。
+C. 示例、最小复现、链路描述是否事实准确。
+D. 已完成 / 部分完成 / 待确认 / 设计拒绝 / 无需修复的判定边界是否一致。
+E. 报告内是否存在前后矛盾、重复表达、标题与正文不一致。
+F. 是否缺少会影响复核的关键证据引用（仅限会影响可审计性的缺失）。
+
+【输出分级规则】
+- 阻断：会改变报告结论、状态判定、完成度统计、问题严重级别、事实描述。
+- 重要：不会推翻整体结论，但会影响可审计性、可复核性或读者理解。
+- 低优先级：仅当本轮已无“阻断 / 重要”问题时才允许提出。
 
 【严格输出规则】
-- 如果你认为当前版本已无问题，或你提出的意见全部可视为不必采纳，请严格输出以下字符串（原样，不要增加任何其他内容）：
+- 如果你确认当前版本已经没有“阻断”或“重要”问题，且低优先级问题也不足以阻止归档，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
-- 否则输出“问题清单（按严重级）”，每条包含修改建议。
+- 否则输出“问题清单（按严重级）”。
+- 每条问题必须包含：问题级别、问题编号或影响段落、证据（文件路径 + 行号）、修改建议。
+- 控制在最小必要条目数；同类问题合并表达。
 - 不要创建、修改或写入任何文件；直接在当前响应输出上述内容。
 EOF_PROMPT
   } >"$prompt_file"
@@ -620,11 +704,32 @@ EOF_PROMPT
 
 请先自行读取上述文件，再决定是否采纳本轮意见并完成修订。
 
+你的目标不是“回应几条意见”，而是把报告尽可能一次性修到下一轮可直接收敛。
+
+【修订原则】
+1. 必须逐条处理 ${REVIEWER_RUNNER} 本轮提出的每一条意见；不能只修最容易的部分。
+2. 如果采纳某条意见，不要只改被点到的那一处；凡是同一根因、同一口径、同一类措辞/统计/证据问题，必须全报告批量修正。
+3. 如果不采纳某条意见，必须有明确理由，而且该理由必须能从当前报告内容中成立；不能靠主观倾向保留原文。
+4. 修完后必须做一轮自检，重点检查：摘要统计与状态桶是否自洽、同一编号在全文中的状态是否一致、示例/最小复现是否事实准确、同类措辞是否统一、关键条目是否有最小证据定位。
+
+【处理要求】
+对 ${REVIEWER_RUNNER} 的每条意见，你在内部必须先完成以下判断（不要输出这个过程）：
+- 采纳 / 部分采纳 / 不采纳
+- 若采纳：需要修改哪些段落、哪些同类位置也要一起修
+- 若不采纳：理由是否足够强，是否会导致下一轮再次被指出
+
+【收敛优先级】
+1. 先修会影响结论正确性的内容。
+2. 再修统计 / 归类 / 证据闭环。
+3. 最后才处理措辞与可读性。
+4. 如果某条意见只是“可以更好”但不足以阻止收敛，可不采纳；前提是当前报告已经达到正式版标准。
+
 【严格输出规则】
-- 如果你决定“全部不采纳 ${REVIEWER_RUNNER} 本轮意见”，请严格输出以下字符串（原样，不要增加任何其他内容）：
+- 如果你判断 ${REVIEWER_RUNNER} 本轮意见全部都不应采纳，并且当前报告已经达到正式归档标准，请严格输出以下字符串（原样，不要增加任何其他内容）：
 ${SUCCESS_MARKER}
 - 否则请输出“修订后的完整 Markdown 报告正文”（完整替换版本，不要解释）。
-- 如果输出修订稿，正文必须可直接写入目标文件。
+- 输出的修订稿必须已经包含你对同类问题的批量修正结果，而不是只修 ${REVIEWER_RUNNER} 点名的局部位置。
+- 正文必须可直接写入目标文件。
 EOF_PROMPT
   } >"$prompt_file"
   echo "$prompt_file"
@@ -745,7 +850,7 @@ fi
 log_info "Dry run: ${DRY_RUN}"
 log_info "Resume: ${RESUME}"
 
-build_initial_prompt
+build_initial_prompts
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
   write_dry_run_placeholder "$INITIAL_REVISER_REPORT" "Initial Review (${REVISER_RUNNER})"
